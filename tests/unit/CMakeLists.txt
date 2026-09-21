@@ -19,6 +19,7 @@ add_lut_test(validation_test)
 add_lut_test(history_test)
 add_lut_test(replay_test)
 add_lut_test(distro_detect_test)
+add_lut_test(statusfd_test)
 
 # Theme & Contrast test (needs Qt6::Gui)
 add_executable(theme_contrast_test

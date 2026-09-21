@@ -11,6 +11,8 @@ add_library(liblut STATIC
     backend/replay/ReplayBackend.cpp
     backend/dnf5/Dnf5Backend.cpp
     backend/alpm/AlpmBackend.cpp
+    backend/apt/StatusFdParser.cpp
+    backend/apt/AptBackend.cpp
     detect/DistroDetect.cpp
     history/HistoryDb.cpp
 )
