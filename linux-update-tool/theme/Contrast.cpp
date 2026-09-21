@@ -57,10 +57,22 @@ QColor mixLinearSrgb(const QColor &c1, const QColor &c2, double weightC2) {
 }
 
 QColor elevate(const QColor &base, int steps) {
-    bool dark = relativeLuminance(base) < 0.5;
-    const QColor target = dark ? Qt::white : Qt::black;
-    double factor = 0.04 * std::abs(steps);
-    return mixLinearSrgb(base, target, factor);
+    if (steps == 0) return base;
+    const bool dark = relativeLuminance(base) < 0.5;
+
+    // Helligkeit in HSL verschieben statt gegen Weiß/Schwarz zu mischen.
+    // Das Mischen entsättigt sehr dunkle Farbschemata vollständig: aus dem
+    // Plasma-Hintergrund #050e15 wurde so das graue #393b3d, und die
+    // Oberfläche sah grau aus statt im gewählten Schema.
+    float h = 0.0f, s = 0.0f, l = 0.0f, a = 1.0f;
+    base.getHslF(&h, &s, &l, &a);
+    if (h < 0.0f) h = 0.0f; // unbunte Farben liefern -1
+
+    const float delta = 0.05f * static_cast<float>(std::abs(steps));
+    float nl = dark ? l + delta : l - delta;
+    nl = std::clamp(nl, 0.0f, 1.0f);
+
+    return QColor::fromHslF(h, s, nl, a);
 }
 
 QColor ensureContrast(const QColor &fg, const QColor &bg, double minRatio) {

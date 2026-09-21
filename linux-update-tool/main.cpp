@@ -2,6 +2,8 @@
 #include <QQuickStyle>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
+#include <QQuickWindow>
+#include <QImage>
 #include <QQmlContext>
 #include <QCommandLineParser>
 #include <QIcon>
@@ -111,6 +113,15 @@ int main(int argc, char *argv[]) {
     );
     parser.addOption(checkQmlOption);
 
+    // Rendert das Hauptfenster in eine PNG-Datei und beendet sich. Gedacht für
+    // die Abnahme von Layout und Farbschema, die kein Testlauf sichtbar macht.
+    QCommandLineOption screenshotOption(
+        QStringList() << QStringLiteral("screenshot"),
+        QStringLiteral("Render the main window to a PNG file and exit."),
+        QStringLiteral("path")
+    );
+    parser.addOption(screenshotOption);
+
     parser.process(app);
 
     bool checkQml = parser.isSet(checkQmlOption);
@@ -118,6 +129,7 @@ int main(int argc, char *argv[]) {
         g_collectQmlWarnings = true;
         g_previousHandler = qInstallMessageHandler(qmlWarningCollector);
     }
+    const QString screenshotPath = parser.value(screenshotOption);
     QString replayFixture = parser.value(replayOption);
     double replaySpeed = parser.value(speedOption).toDouble();
     if (replaySpeed <= 0.0) replaySpeed = 1.0;
@@ -142,9 +154,30 @@ int main(int argc, char *argv[]) {
         &engine,
         &QQmlApplicationEngine::objectCreated,
         &app,
-        [url, checkQml, &app, &engine](QObject *obj, const QUrl &objUrl) {
+        [url, checkQml, screenshotPath, &app, &engine](QObject *obj, const QUrl &objUrl) {
             if (!obj && url == objUrl) {
                 QCoreApplication::exit(-1);
+            } else if (obj && !screenshotPath.isEmpty()) {
+                auto *window = qobject_cast<QQuickWindow *>(obj);
+                if (!window) {
+                    fprintf(stderr, "Wurzelobjekt ist kein Fenster – kein Screenshot möglich.\n");
+                    app.exit(1);
+                    return;
+                }
+                // Zwei Ereignisdurchläufe abwarten, damit Layout und erster
+                // Renderdurchgang abgeschlossen sind.
+                QTimer::singleShot(600, &app, [&app, window, screenshotPath]() {
+                    const QImage image = window->grabWindow();
+                    if (image.isNull() || !image.save(screenshotPath)) {
+                        fprintf(stderr, "Screenshot konnte nicht gespeichert werden: %s\n",
+                                qPrintable(screenshotPath));
+                        app.exit(1);
+                        return;
+                    }
+                    printf("Screenshot gespeichert: %s (%dx%d)\n",
+                           qPrintable(screenshotPath), image.width(), image.height());
+                    app.exit(0);
+                });
             } else if (obj && checkQml) {
                 QTimer::singleShot(50, &app, [&app, &engine]() {
                     int failures = instantiateAllPages(engine);

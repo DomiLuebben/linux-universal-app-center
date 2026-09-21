@@ -38,6 +38,21 @@ target_link_libraries(theme_contrast_test PRIVATE
 )
 add_test(NAME theme_contrast_test COMMAND theme_contrast_test)
 
+# Farbschema aus kdeglobals: QSettings-Falle und Flächenableitung
+add_executable(kdeglobals_test
+    kdeglobals_test.cpp
+    ../../linux-update-tool/theme/SystemPalette.cpp
+    ../../linux-update-tool/theme/Contrast.cpp
+)
+target_include_directories(kdeglobals_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(kdeglobals_test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::DBus
+    Qt6::Test
+)
+add_test(NAME kdeglobals_test COMMAND kdeglobals_test)
+
 add_executable(list_perf_test
     list_perf_test.cpp
     ../../linux-update-tool/models/UpdatesModel.cpp

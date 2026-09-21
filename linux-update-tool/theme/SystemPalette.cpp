@@ -34,6 +34,15 @@ void SystemPalette::onKdeGlobalsChanged(const QString &path) {
     reloadTheme();
 }
 
+QString SystemPalette::rawValue(QSettings &settings, const QString &key) {
+    const QVariant v = settings.value(key);
+    if (!v.isValid()) return {};
+    if (v.typeId() == QMetaType::QStringList) {
+        return v.toStringList().join(QLatin1Char(','));
+    }
+    return v.toString();
+}
+
 QColor SystemPalette::parseRgb(const QString &str, const QColor &fallback) {
     if (str.isEmpty()) return fallback;
     QStringList parts = str.split(QLatin1Char(','), Qt::SkipEmptyParts);
@@ -96,31 +105,33 @@ void SystemPalette::loadFromKdeGlobals() {
 
     // [Colors:Window]
     s.beginGroup(QStringLiteral("Colors:Window"));
-    m_bg = parseRgb(s.value(QStringLiteral("BackgroundNormal")).toString(), defBg);
-    m_text = parseRgb(s.value(QStringLiteral("ForegroundNormal")).toString(), defText);
-    m_textMuted = parseRgb(s.value(QStringLiteral("ForegroundInactive")).toString(), defTextMuted);
+    m_bg = parseRgb(rawValue(s, QStringLiteral("BackgroundNormal")), defBg);
+    m_text = parseRgb(rawValue(s, QStringLiteral("ForegroundNormal")), defText);
+    m_textMuted = parseRgb(rawValue(s, QStringLiteral("ForegroundInactive")), defTextMuted);
     s.endGroup();
 
     // [Colors:View]
     s.beginGroup(QStringLiteral("Colors:View"));
-    m_surfaceSunken = parseRgb(s.value(QStringLiteral("BackgroundNormal")).toString(), defView);
-    m_surfaceAlt = parseRgb(s.value(QStringLiteral("BackgroundAlternate")).toString(), elevate(m_surfaceSunken, 1));
-    m_textOnSunken = parseRgb(s.value(QStringLiteral("ForegroundNormal")).toString(), defText);
-    m_positive = parseRgb(s.value(QStringLiteral("ForegroundPositive")).toString(), defPositive);
-    m_negative = parseRgb(s.value(QStringLiteral("ForegroundNegative")).toString(), defNegative);
-    m_neutral = parseRgb(s.value(QStringLiteral("ForegroundNeutral")).toString(), defNeutral);
+    m_surfaceSunken = parseRgb(rawValue(s, QStringLiteral("BackgroundNormal")), defView);
+    m_surfaceAlt = parseRgb(rawValue(s, QStringLiteral("BackgroundAlternate")), elevate(m_surfaceSunken, 1));
+    m_textOnSunken = parseRgb(rawValue(s, QStringLiteral("ForegroundNormal")), defText);
+    m_positive = parseRgb(rawValue(s, QStringLiteral("ForegroundPositive")), defPositive);
+    m_negative = parseRgb(rawValue(s, QStringLiteral("ForegroundNegative")), defNegative);
+    m_neutral = parseRgb(rawValue(s, QStringLiteral("ForegroundNeutral")), defNeutral);
     s.endGroup();
 
-    // [General] AccentColor oder [Colors:Selection]
-    s.beginGroup(QStringLiteral("General"));
-    QString accentStr = s.value(QStringLiteral("AccentColor")).toString();
-    s.endGroup();
+    // [General] AccentColor oder [Colors:Selection].
+    // ACHTUNG: QSettings bildet den INI-Abschnitt [General] auf die Wurzelebene
+    // ab. Ein beginGroup("General") sucht deshalb unter "General/AccentColor"
+    // und findet nie etwas – die in Plasma eingestellte Akzentfarbe wurde
+    // dadurch stillschweigend ignoriert.
+    QString accentStr = rawValue(s, QStringLiteral("AccentColor"));
 
     if (!accentStr.isEmpty()) {
         m_accent = parseRgb(accentStr, defAccent);
     } else {
         s.beginGroup(QStringLiteral("Colors:Selection"));
-        m_accent = parseRgb(s.value(QStringLiteral("BackgroundNormal")).toString(), defAccent);
+        m_accent = parseRgb(rawValue(s, QStringLiteral("BackgroundNormal")), defAccent);
         s.endGroup();
     }
 

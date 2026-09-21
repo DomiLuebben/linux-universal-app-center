@@ -22,6 +22,7 @@ Item {
             spacing: Theme.s5
 
             Text {
+                id: countLabel
                 text: updatesModel.totalCount
                 font.pixelSize: 42
                 font.weight: Font.Bold
@@ -33,9 +34,15 @@ Item {
             Column {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.s2
-                width: parent.width - 390
+                // Breite aus den tatsächlichen Nachbarn ableiten statt aus einer
+                // geratenen Zahl: die vorherigen 390 px passten nicht zur
+                // Knopfbreite, weshalb die Zeile darunter verdeckt wurde.
+                width: Math.max(0, parent.width - countLabel.width
+                                   - actionRow.width - 2 * parent.spacing)
 
                 Text {
+                    width: parent.width
+                    elide: Text.ElideRight
                     text: qsTr("Geplante Paketänderungen")
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
@@ -50,10 +57,13 @@ Item {
                     font.pixelSize: 13
                     font.features: ({ "tnum": 1 })
                     color: Theme.textMuted
+                    width: parent.width
+                    elide: Text.ElideRight
                 }
             }
 
             Row {
+                id: actionRow
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.s3
 

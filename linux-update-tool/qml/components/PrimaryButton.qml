@@ -19,9 +19,10 @@ T.Button {
     topPadding: Theme.s2
     bottomPadding: Theme.s2
 
+    // Kein anchors.centerIn: die Geometrie des contentItem setzt der Button
+    // selbst; ein Anker dagegen streitet mit dieser Zuweisung.
     contentItem: Row {
         spacing: Theme.s2
-        anchors.centerIn: parent
 
         Kirigami.Icon {
             visible: control.iconName.length > 0 || (control.icon && control.icon.name.length > 0)
@@ -48,8 +49,12 @@ T.Button {
     }
 
     background: Rectangle {
-        implicitWidth: 100
-        implicitHeight: 40
+        // Diese Werte kommen im QQC2-Größenmodell NOCH das Padding obendrauf.
+        // Mit den vorherigen 100x40 ergab das 132x56 px grosse Knöpfe – rund
+        // doppelt so hoch wie ein Breeze-Knopf. Kirigami.Units skaliert
+        // ausserdem mit Schriftgrösse und DPI des Benutzers.
+        implicitWidth: Kirigami.Units.gridUnit * 3
+        implicitHeight: Kirigami.Units.gridUnit
         radius: Theme.radiusControl
 
         color: {

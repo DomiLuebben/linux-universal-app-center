@@ -5,6 +5,8 @@
 #include <QFileSystemWatcher>
 #include "Contrast.h"
 
+class QSettings;
+
 namespace lut {
 
 class SystemPalette : public QObject {
@@ -50,6 +52,14 @@ class SystemPalette : public QObject {
 public:
     static SystemPalette *instance();
     explicit SystemPalette(QObject *parent = nullptr);
+
+    /// Liest einen kdeglobals-Wert als Rohtext.
+    /// Nötig, weil QSettings im INI-Format unquotierte Kommawerte wie
+    /// "5,14,21" als QStringList zurückgibt – toString() liefert darauf einen
+    /// LEEREN String, und jede Farbe fiele stillschweigend auf die Vorgabe
+    /// zurück. Genau das liess die Oberfläche grau statt im Plasma-Schema
+    /// erscheinen.
+    static QString rawValue(QSettings &settings, const QString &key);
 
     QColor bg() const { return m_bg; }
     QColor surface() const { return m_surface; }
