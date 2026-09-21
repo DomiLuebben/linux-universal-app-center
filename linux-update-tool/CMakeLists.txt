@@ -5,6 +5,7 @@ qt_policy(SET QTP0004 NEW)
 qt_add_executable(linux-update-tool
     main.cpp
     DaemonClient.cpp
+    AurUpdates.cpp
     models/UpdatesModel.cpp
     models/LogModel.cpp
     models/InstalledModel.cpp
@@ -38,6 +39,7 @@ qt_add_qml_module(linux-update-tool
         qml/pages/Installed.qml
         qml/pages/History.qml
         qml/pages/Logs.qml
+        qml/pages/Aur.qml
         qml/pages/Settings.qml
 )
 

@@ -95,6 +95,11 @@ ApplicationWindow {
             }
 
             Component {
+                id: aurPage
+                Aur {}
+            }
+
+            Component {
                 id: logsPage
                 Logs {}
             }
@@ -139,8 +144,9 @@ ApplicationWindow {
                 case 0: pageStack.replace(updatesPage); break;
                 case 1: pageStack.replace(installedPage); break;
                 case 2: pageStack.replace(historyPage); break;
-                case 3: pageStack.replace(logsPage); break;
-                case 4: pageStack.replace(settingsPage); break;
+                case 3: pageStack.replace(aurPage); break;
+                case 4: pageStack.replace(logsPage); break;
+                case 5: pageStack.replace(settingsPage); break;
             }
         }
     }

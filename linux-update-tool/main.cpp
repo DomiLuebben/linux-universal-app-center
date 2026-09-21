@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QLibraryInfo>
 #include "DaemonClient.h"
+#include "AurUpdates.h"
 #include "theme/SystemPalette.h"
 #include "liblut/liblut.h"
 
@@ -47,6 +48,7 @@ const QStringList &checkablePages() {
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Installed.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/History.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Logs.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Aur.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Settings.qml"),
     };
     return pages;
@@ -136,6 +138,7 @@ int main(int argc, char *argv[]) {
 
     auto *palette = lut::SystemPalette::instance();
     auto *client = new lut::DaemonClient(&app);
+    auto *aur = new lut::AurUpdates(&app);
     client->init(replayFixture, replaySpeed);
 
     QQmlApplicationEngine engine;
@@ -148,6 +151,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("logModel"), client->logModel());
     engine.rootContext()->setContextProperty(QStringLiteral("installedModel"), client->installedModel());
     engine.rootContext()->setContextProperty(QStringLiteral("historyModel"), client->historyModel());
+    engine.rootContext()->setContextProperty(QStringLiteral("aurUpdates"), aur);
 
     const QUrl url(QStringLiteral("qrc:/LinuxUpdateTool/qml/Main.qml"));
     QObject::connect(

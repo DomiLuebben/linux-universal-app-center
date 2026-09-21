@@ -8,6 +8,7 @@ url="https://github.com/DomiLuebben/linux-update-tool"
 license=('GPL-3.0-or-later')
 depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'polkit-qt6' 'sqlite' 'pacman' 'pacman-contrib' 'kirigami' 'qqc2-desktop-style')
 makedepends=('cmake' 'gcc')
+optdepends=('linux-package-installer>=1.4.0: AUR-Aktualisierungen auf Arch und Derivaten')
 checkdepends=('desktop-file-utils' 'appstream')
 
 build() {

@@ -38,6 +38,18 @@ target_link_libraries(theme_contrast_test PRIVATE
 )
 add_test(NAME theme_contrast_test COMMAND theme_contrast_test)
 
+# AUR-Antwort des linux-package-installer-Helfers auswerten
+add_executable(aur_updates_test
+    aur_updates_test.cpp
+    ../../linux-update-tool/AurUpdates.cpp
+)
+target_include_directories(aur_updates_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(aur_updates_test PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME aur_updates_test COMMAND aur_updates_test)
+
 # Farbschema aus kdeglobals: QSettings-Falle und Flächenableitung
 add_executable(kdeglobals_test
     kdeglobals_test.cpp
