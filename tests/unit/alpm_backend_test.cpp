@@ -4,6 +4,10 @@
 #include <QProcess>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDir>
+#ifdef HAVE_ALPM
+#include <alpm.h>
+#endif
 #include "liblut/backend/alpm/AlpmBackend.h"
 #include "liblut/protocol/events.h"
 
@@ -18,6 +22,8 @@ private slots:
     void testQueryOrphansAndCache();
     void testDetectPacnew();
     void testWorkerLockCollision();
+    void testEmptyTransactionIsSuccess();
+    void testLibalpmEmptyTransactionContract();
     void testWorkerTestMode();
 };
 
@@ -109,6 +115,66 @@ void AlpmBackendTest::testWorkerLockCollision() {
     QVERIFY(out.contains(QLatin1String("db.lck")));
     QVERIFY(out.contains(QLatin1String("TransactionDone")));
     QVERIFY(out.contains(QLatin1String("Failed")));
+}
+
+// Pinnt die libalpm-Zusicherung, auf der die Leerlauf-Behandlung im Worker
+// beruht: bei leerer Transaktion liefert prepare 0, commit scheitert aber mit
+// ALPM_ERR_TRANS_NOT_PREPARED. Ändert libalpm das, muss der Worker nachziehen.
+void AlpmBackendTest::testLibalpmEmptyTransactionContract() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = tempDir.path() + QStringLiteral("/root/");
+    const QString db = tempDir.path() + QStringLiteral("/db/");
+    QVERIFY(QDir().mkpath(root) && QDir().mkpath(db + QStringLiteral("local")));
+
+    alpm_errno_t err;
+    alpm_handle_t *handle = alpm_initialize(root.toUtf8().constData(), db.toUtf8().constData(), &err);
+    QVERIFY2(handle, alpm_strerror(err));
+    QCOMPARE(alpm_trans_init(handle, 0), 0);
+
+    alpm_list_t *data = nullptr;
+    QCOMPARE(alpm_trans_prepare(handle, &data), 0);          // meldet Erfolg ...
+    QCOMPARE(alpm_trans_get_add(handle), nullptr);
+    QCOMPARE(alpm_trans_get_remove(handle), nullptr);
+    QCOMPARE(alpm_trans_commit(handle, &data), -1);          // ... commit aber nicht
+    QCOMPARE(alpm_errno(handle), ALPM_ERR_TRANS_NOT_PREPARED);
+
+    alpm_trans_release(handle);
+    alpm_release(handle);
+}
+
+// Ein System ohne verfügbare Aktualisierungen muss als Erfolg enden, nicht als
+// "Transaktionsausführung fehlgeschlagen: Vorgang nicht vorbereitet".
+void AlpmBackendTest::testEmptyTransactionIsSuccess() {
+    QString workerPath = QStringLiteral(PROJECT_DIR) + QStringLiteral("/build/liblut/lut-alpm-worker");
+    if (!QFile::exists(workerPath)) {
+        workerPath = QCoreApplication::applicationDirPath() + QStringLiteral("/lut-alpm-worker");
+    }
+    QVERIFY(QFile::exists(workerPath));
+
+    // Leere Datenbank in einem Wegwerfverzeichnis: es gibt nichts zu tun.
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString db = tempDir.path() + QStringLiteral("/db");
+    QVERIFY(QDir().mkpath(db + QStringLiteral("/local")));
+
+    QProcess proc;
+    proc.start(workerPath, {QStringLiteral("--dry-run"),
+                            QStringLiteral("--root"), tempDir.path(),
+                            QStringLiteral("--dbpath"), db});
+    QVERIFY(proc.waitForFinished(60000));
+
+    const QString out = QString::fromUtf8(proc.readAllStandardOutput());
+    QVERIFY2(proc.exitCode() == 0, qPrintable(out));
+    QVERIFY2(out.contains(QLatin1String("\"result\":\"Success\"")), qPrintable(out));
+    QVERIFY2(!out.contains(QLatin1String("nicht vorbereitet")), qPrintable(out));
+    // Auf die unterscheidende Meldung prüfen, nicht nur auf "Success": ohne die
+    // Leerlauf-Behandlung fällt der Worker durch und meldet fälschlich
+    // "System erfolgreich aktualisiert", obwohl nichts geschehen ist.
+    // QStringLiteral, nicht QLatin1String: die Quelldatei ist UTF-8, und
+    // QLatin1String würde das "ü" byteweise als zwei Zeichen lesen.
+    QVERIFY2(out.contains(QStringLiteral("Keine Aktualisierungen verfügbar")), qPrintable(out));
+    QVERIFY2(!out.contains(QLatin1String("System erfolgreich aktualisiert")), qPrintable(out));
 }
 
 void AlpmBackendTest::testWorkerTestMode() {

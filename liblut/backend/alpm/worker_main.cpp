@@ -447,6 +447,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Leere Transaktion ist ein Erfolg, kein Fehler. libalpm setzt den Zustand
+    // PREPARED nur, wenn es tatsächlich Ziele gibt: alpm_trans_prepare() liefert
+    // dann zwar 0, alpm_trans_commit() scheitert aber mit
+    // ALPM_ERR_TRANS_NOT_PREPARED ("Vorgang nicht vorbereitet"). Genau das
+    // passiert, wenn alle Kandidaten lokal neuer sind als im Repository.
+    if (alpm_trans_get_add(handle) == nullptr && alpm_trans_get_remove(handle) == nullptr) {
+        emitEvent(lut::LogLine{lut::LogLevel::Info, QStringLiteral("alpm-worker"),
+            QStringLiteral("Keine Pakete zu aktualisieren – das System ist aktuell.")});
+        alpm_trans_release(handle);
+        alpm_release(handle);
+        emitEvent(lut::TransactionDone{lut::Result::Success,
+            QStringLiteral("Keine Aktualisierungen verfügbar – das System ist aktuell."), false, {}, 0});
+        emitEvent(lut::PhaseChanged{lut::Phase::Finished, QStringLiteral("Fertig"), false});
+        return 0;
+    }
+
     if (!isDryRun) {
         if (alpm_trans_commit(handle, &data) != 0) {
             alpm_errno_t err = alpm_errno(handle);
