@@ -11,7 +11,9 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 find_package(Qt6 6.8 REQUIRED COMPONENTS
     Core
     Gui
+    Widgets
     Quick
+    QuickControls2
     Qml
     DBus
     Svg

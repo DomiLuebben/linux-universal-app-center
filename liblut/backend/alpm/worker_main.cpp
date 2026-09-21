@@ -70,6 +70,10 @@ QStringList detectServicesNeedingRestart() {
 #ifdef HAVE_ALPM
 void setupAlpmCallbacks(alpm_handle_t *handle, QStringList &createdPacnewFiles) {
     alpm_option_set_logcb(handle, [](void *, alpm_loglevel_t level, const char *fmt, va_list args) {
+        if (level & ALPM_LOG_DEBUG) {
+            return; // Debug-Meldungen nicht über D-Bus streamen
+        }
+
         char buf[2048];
         vsnprintf(buf, sizeof(buf), fmt, args);
         QString text = QString::fromUtf8(buf).trimmed();
@@ -78,7 +82,6 @@ void setupAlpmCallbacks(alpm_handle_t *handle, QStringList &createdPacnewFiles) 
         lut::LogLevel l = lut::LogLevel::Info;
         if (level & ALPM_LOG_ERROR) l = lut::LogLevel::Error;
         else if (level & ALPM_LOG_WARNING) l = lut::LogLevel::Warning;
-        else if (level & ALPM_LOG_DEBUG) l = lut::LogLevel::Debug;
 
         emitEvent(lut::LogLine{l, QStringLiteral("alpm"), text});
     }, nullptr);
@@ -218,7 +221,7 @@ void configureRepositories(alpm_handle_t *handle) {
             QString cleanRepo = repo.trimmed();
             if (cleanRepo.isEmpty()) continue;
 
-            alpm_db_t *db = alpm_register_syncdb(handle, cleanRepo.toUtf8().constData(), 0);
+            alpm_db_t *db = alpm_register_syncdb(handle, cleanRepo.toUtf8().constData(), ALPM_SIG_USE_DEFAULT);
             if (db) {
                 QProcess srvProc;
                 srvProc.start(QStringLiteral("pacman-conf"), {QStringLiteral("--repo"), cleanRepo, QStringLiteral("Server")});
@@ -341,29 +344,77 @@ int main(int argc, char *argv[]) {
     }
 
     if (alpm_sync_sysupgrade(handle, 0) != 0) {
-        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_sync_sysupgrade fehlgeschlagen: %1").arg(alpm_strerror(alpm_errno(handle)))});
+        alpm_errno_t err = alpm_errno(handle);
+        QString errStr = QString::fromUtf8(alpm_strerror(err));
+        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_sync_sysupgrade fehlgeschlagen: %1").arg(errStr)});
         alpm_trans_release(handle);
         alpm_release(handle);
-        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Abhängigkeitsauflösung fehlgeschlagen"), false, {}, 0});
+        emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Abhängigkeitsprüfung fehlgeschlagen: %1").arg(errStr), false});
+        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Abhängigkeitsauflösung fehlgeschlagen: %1").arg(errStr), false, {}, 0});
         return 1;
     }
 
     alpm_list_t *data = nullptr;
     if (alpm_trans_prepare(handle, &data) != 0) {
-        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_trans_prepare fehlgeschlagen: %1").arg(alpm_strerror(alpm_errno(handle)))});
+        alpm_errno_t err = alpm_errno(handle);
+        QString errStr = QString::fromUtf8(alpm_strerror(err));
+        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_trans_prepare fehlgeschlagen: %1").arg(errStr)});
+        if (data) {
+            for (alpm_list_t *i = data; i; i = alpm_list_next(i)) {
+                if (err == ALPM_ERR_UNSATISFIED_DEPS) {
+                    auto *dep = static_cast<alpm_depmissing_t *>(i->data);
+                    if (dep) {
+                        char *depstr = alpm_dep_compute_string(dep->depend);
+                        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm"),
+                            QStringLiteral("Fehlende Abhängigkeit für '%1': %2").arg(QString::fromUtf8(dep->target), QString::fromUtf8(depstr ? depstr : ""))});
+                        free(depstr);
+                    }
+                } else if (err == ALPM_ERR_CONFLICTING_DEPS) {
+                    auto *conflict = static_cast<alpm_conflict_t *>(i->data);
+                    if (conflict && conflict->package1 && conflict->package2) {
+                        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm"),
+                            QStringLiteral("Paketkonflikt: '%1' kollidiert mit '%2'").arg(
+                                QString::fromUtf8(alpm_pkg_get_name(conflict->package1)),
+                                QString::fromUtf8(alpm_pkg_get_name(conflict->package2)))});
+                    }
+                }
+            }
+        }
         alpm_trans_release(handle);
         alpm_release(handle);
-        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Transaktionsvorbereitung fehlgeschlagen"), false, {}, 0});
+        emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Vorbereitung fehlgeschlagen: %1").arg(errStr), false});
+        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Transaktionsvorbereitung fehlgeschlagen: %1").arg(errStr), false, {}, 0});
         return 1;
     }
 
     if (!isDryRun) {
         if (alpm_trans_commit(handle, &data) != 0) {
-            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_trans_commit fehlgeschlagen: %1").arg(alpm_strerror(alpm_errno(handle)))});
+            alpm_errno_t err = alpm_errno(handle);
+            QString errStr = QString::fromUtf8(alpm_strerror(err));
+            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_trans_commit fehlgeschlagen: %1").arg(errStr)});
+            if (data) {
+                for (alpm_list_t *i = data; i; i = alpm_list_next(i)) {
+                    if (err == ALPM_ERR_FILE_CONFLICTS) {
+                        auto *fc = static_cast<alpm_fileconflict_t *>(i->data);
+                        if (fc) {
+                            QString conflictTarget = fc->ctarget ? QString::fromUtf8(fc->ctarget) : QStringLiteral("Dateisystem");
+                            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm"),
+                                QStringLiteral("Dateikonflikt: Paket '%1' kollidiert bei '%2' mit '%3'")
+                                    .arg(QString::fromUtf8(fc->target), QString::fromUtf8(fc->file), conflictTarget)});
+                        }
+                    } else if (err == ALPM_ERR_PKG_INVALID || err == ALPM_ERR_PKG_INVALID_SIG) {
+                        auto *pkgName = static_cast<const char *>(i->data);
+                        if (pkgName) {
+                            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm"),
+                                QStringLiteral("Ungültiges Paket oder fehlerhafte Signatur: %1").arg(QString::fromUtf8(pkgName))});
+                        }
+                    }
+                }
+            }
             alpm_trans_release(handle);
             alpm_release(handle);
-            emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Installation fehlgeschlagen"), false});
-            emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Transaktionsausführung fehlgeschlagen"), false, {}, 0});
+            emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Installation fehlgeschlagen: %1").arg(errStr), false});
+            emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Transaktionsausführung fehlgeschlagen: %1").arg(errStr), false, {}, 0});
             return 1;
         }
     }

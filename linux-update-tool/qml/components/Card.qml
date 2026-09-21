@@ -10,6 +10,8 @@ Rectangle {
 
     radius: Theme.radiusCard
     color: sunken ? Theme.surfaceSunken : (raised ? Theme.surfaceRaised : Theme.surface)
+    border.color: Theme.separator
+    border.width: 1
 
     Behavior on color {
         enabled: Theme.motionScale > 0

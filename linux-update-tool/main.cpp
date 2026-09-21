@@ -1,20 +1,27 @@
-#include <QGuiApplication>
+#include <QApplication>
+#include <QQuickStyle>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QCommandLineParser>
 #include <QIcon>
+#include <QTimer>
 #include <QDebug>
 #include "DaemonClient.h"
 #include "theme/SystemPalette.h"
 #include "liblut/liblut.h"
 
 int main(int argc, char *argv[]) {
-    QGuiApplication app(argc, argv);
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+        QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+    }
+
+    QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("linux-update-tool"));
     app.setApplicationDisplayName(QStringLiteral("Linux Update Tool"));
     app.setApplicationVersion(lut::versionString());
     app.setOrganizationName(QStringLiteral("LinuxUpdateTool"));
     app.setOrganizationDomain(QStringLiteral("linuxupdatetool.org"));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("org.linuxupdatetool")));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Linux Update Tool GUI"));
@@ -82,9 +89,9 @@ int main(int argc, char *argv[]) {
     );
     engine.load(url);
 
-    // Falls Replay-Modus aktiv ist: nach 500ms automatisch Metadaten laden/abspielen
-    if (client->isReplayMode()) {
-        QTimer::singleShot(500, client, &lut::DaemonClient::refreshUpdates);
+    // Automatisch beim App-Start Metadaten prüfen und Updates laden
+    if (!checkQml) {
+        QTimer::singleShot(300, client, &lut::DaemonClient::refreshUpdates);
     }
 
     return app.exec();

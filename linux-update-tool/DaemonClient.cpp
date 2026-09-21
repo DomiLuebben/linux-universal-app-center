@@ -100,6 +100,22 @@ void DaemonClient::handleEvent(const Event &event) {
         m_updatesModel.setPackages(std::get<PlanReady>(event).ops);
         m_lastCheckedString = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm"));
         emit statusChanged();
+    } else if (std::holds_alternative<LogLine>(event)) {
+        m_logModel.appendLog(std::get<LogLine>(event));
+    } else if (std::holds_alternative<PhaseChanged>(event)) {
+        const auto &phase = std::get<PhaseChanged>(event);
+        LogLevel l = (phase.phase == Phase::Failed) ? LogLevel::Error : LogLevel::Info;
+        m_logModel.appendLog(LogLine{l, QStringLiteral("Phase"), phase.label});
+    } else if (std::holds_alternative<TransactionDone>(event)) {
+        const auto &done = std::get<TransactionDone>(event);
+        LogLevel l = (done.result == Result::Success) ? LogLevel::Info : (done.result == Result::Cancelled ? LogLevel::Warning : LogLevel::Error);
+        m_logModel.appendLog(LogLine{l, QStringLiteral("Ergebnis"), done.summary});
+    } else if (std::holds_alternative<ScriptletStarted>(event)) {
+        const auto &sc = std::get<ScriptletStarted>(event);
+        m_logModel.appendLog(LogLine{LogLevel::Info, sc.scriptletName, sc.pkgId});
+    } else if (std::holds_alternative<ItemStarted>(event)) {
+        const auto &item = std::get<ItemStarted>(event);
+        m_logModel.appendLog(LogLine{LogLevel::Info, QStringLiteral("Paket"), item.pkgId});
     }
     m_progressModel.processEvent(event);
 }
@@ -116,18 +132,48 @@ void DaemonClient::refreshUpdates() {
         QDBusReply<QDBusObjectPath> reply = m_daemonIface->call(QStringLiteral("PlanUpgrade"), opts);
         if (reply.isValid()) {
             m_activeTransactionPath = reply.value();
+        } else {
+            qWarning() << "PlanUpgrade call failed:" << reply.error().message();
+            m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("D-Bus"), reply.error().message()});
         }
     }
 }
 
 void DaemonClient::startUpgrade() {
     emit transactionStarted();
+    m_logModel.clear();
+    m_logModel.appendLog(LogLine{LogLevel::Info, QStringLiteral("lutd"), QStringLiteral("Transaktion wird vorbereitet...")});
+
     if (m_replayBackend) {
         m_replayBackend->commit();
         return;
     }
-    if (m_daemonIface && m_daemonIface->isValid() && !m_activeTransactionPath.path().isEmpty()) {
-        m_daemonIface->call(QStringLiteral("Commit"), QVariant::fromValue(m_activeTransactionPath));
+    if (m_daemonIface && m_daemonIface->isValid()) {
+        if (m_activeTransactionPath.path().isEmpty()) {
+            QVariantMap opts;
+            opts[QStringLiteral("includeSecurityOnly")] = false;
+            opts[QStringLiteral("refreshFirst")] = false;
+            QDBusReply<QDBusObjectPath> planReply = m_daemonIface->call(QStringLiteral("PlanUpgrade"), opts);
+            if (planReply.isValid()) {
+                m_activeTransactionPath = planReply.value();
+            }
+        }
+
+        if (!m_activeTransactionPath.path().isEmpty()) {
+            QDBusReply<void> reply = m_daemonIface->call(QStringLiteral("Commit"), QVariant::fromValue(m_activeTransactionPath));
+            if (!reply.isValid()) {
+                QString err = reply.error().message();
+                qWarning() << "Commit call failed:" << err;
+                m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("D-Bus"), err});
+                m_progressModel.processEvent(PhaseChanged{Phase::Failed, err, false});
+                m_progressModel.processEvent(TransactionDone{Result::Failed, err, false, {}, 0});
+            }
+        } else {
+            QString err = QStringLiteral("Kein gültiger Transaktionspfad vorhanden.");
+            m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("lutd"), err});
+            m_progressModel.processEvent(PhaseChanged{Phase::Failed, err, false});
+            m_progressModel.processEvent(TransactionDone{Result::Failed, err, false, {}, 0});
+        }
     }
 }
 

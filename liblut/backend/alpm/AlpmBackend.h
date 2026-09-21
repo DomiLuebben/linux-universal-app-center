@@ -38,6 +38,7 @@ private:
 
     QProcess *m_process = nullptr;
     QList<PackageOp> m_plannedOps;
+    bool m_workerDoneEmitted = false;
 };
 
 } // namespace lut

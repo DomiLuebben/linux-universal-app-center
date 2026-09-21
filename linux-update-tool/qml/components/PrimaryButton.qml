@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Templates as T
+import org.kde.kirigami as Kirigami
 
 T.Button {
     id: control
@@ -22,6 +23,14 @@ T.Button {
         spacing: Theme.s2
         anchors.centerIn: parent
 
+        Kirigami.Icon {
+            visible: control.iconName.length > 0 || (control.icon && control.icon.name.length > 0)
+            source: control.iconName.length > 0 ? control.iconName : (control.icon ? control.icon.name : "")
+            width: 18
+            height: 18
+            anchors.verticalCenter: parent.verticalCenter
+        }
+
         Text {
             visible: control.text.length > 0
             text: control.text
@@ -34,6 +43,7 @@ T.Button {
             }
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+            anchors.verticalCenter: parent.verticalCenter
         }
     }
 

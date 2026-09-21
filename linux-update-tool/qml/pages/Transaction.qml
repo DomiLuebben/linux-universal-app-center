@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import org.kde.kirigami as Kirigami
 import "../components"
 
 Item {
@@ -15,10 +16,15 @@ Item {
 
         // Titelzeile
         Text {
-            text: progressModel.currentPhase === 9 ? qsTr("Aktualisierung abgeschlossen") : qsTr("Aktualisierung läuft")
+            text: {
+                if (progressModel.currentPhase === 9) return qsTr("Aktualisierung abgeschlossen");
+                if (progressModel.currentPhase === 10) return qsTr("Aktualisierung fehlgeschlagen");
+                if (progressModel.currentPhase === 11) return qsTr("Aktualisierung abgebrochen");
+                return qsTr("Aktualisierung läuft");
+            }
             font.pixelSize: 22
             font.weight: Font.DemiBold
-            color: Theme.text
+            color: progressModel.currentPhase === 10 ? Theme.negative : Theme.text
         }
 
         // Stepper oben
@@ -151,23 +157,87 @@ Item {
             }
         }
 
+        // Fehler-Karte bei Fehlgeschlagener Transaktion
+        Card {
+            visible: progressModel.currentPhase === 10
+            width: parent.width
+            height: 80
+            color: Theme.surface
+
+            Rectangle {
+                anchors.fill: parent
+                color: "transparent"
+                border.color: Theme.negative
+                border.width: 1
+                radius: Theme.radiusCard
+            }
+
+            Row {
+                anchors.fill: parent
+                anchors.margins: Theme.s4
+                spacing: Theme.s4
+
+                Kirigami.Icon {
+                    source: "dialog-error"
+                    width: 32
+                    height: 32
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Column {
+                    width: parent.width - 60
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 2
+
+                    Text {
+                        text: qsTr("Fehler bei der Aktualisierung")
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                        color: Theme.negative
+                    }
+
+                    Text {
+                        text: progressModel.statusMessage.length > 0 ? progressModel.statusMessage : qsTr("Ein Fehler ist aufgetreten. Details siehe Protokoll unten.")
+                        font.pixelSize: 13
+                        color: Theme.text
+                        wrapMode: Text.Wrap
+                        width: parent.width
+                    }
+                }
+            }
+        }
+
         // Steuerleiste
         Row {
             width: parent.width
             spacing: Theme.s3
 
             PrimaryButton {
-                text: logPane.expanded ? qsTr("▲ Details ausblenden") : qsTr("▼ Details anzeigen")
+                text: logPane.expanded ? qsTr("▲ Protokoll ausblenden") : qsTr("▼ Protokoll anzeigen")
                 variant: "quiet"
                 onClicked: logPane.expanded = !logPane.expanded
             }
 
-            Item { width: 50; height: 1 }
+            PrimaryButton {
+                text: qsTr("Protokoll kopieren")
+                variant: "quiet"
+                visible: progressModel.currentPhase === 10 || logPane.expanded
+                onClicked: {
+                    var txt = logModel.copyAll();
+                    if (txt.length > 0) {
+                        clipEdit.text = txt;
+                        clipEdit.selectAll();
+                        clipEdit.copy();
+                    }
+                }
+            }
+
+            Item { width: 40; height: 1 }
 
             PrimaryButton {
                 text: qsTr("Abbrechen")
                 variant: "destructive"
-                visible: progressModel.currentPhase !== 9
+                visible: progressModel.currentPhase < 9
                 enabled: progressModel.isCancellable
                 onClicked: root.cancelRequested()
             }
@@ -178,6 +248,18 @@ Item {
                 visible: progressModel.currentPhase === 9
                 onClicked: root.finishAcknowledged()
             }
+
+            PrimaryButton {
+                text: qsTr("Zurück zur Übersicht")
+                variant: "primary"
+                visible: progressModel.currentPhase >= 10
+                onClicked: root.finishAcknowledged()
+            }
+        }
+
+        TextEdit {
+            id: clipEdit
+            visible: false
         }
 
         // LogPane
@@ -194,6 +276,15 @@ Item {
         target: daemonClient
         function onQuestionPrompt(q) {
             root.activeQuestion = { id: q.id, kind: q.kind, payload: q.payload };
+        }
+    }
+
+    Connections {
+        target: progressModel
+        function onCurrentPhaseChanged() {
+            if (progressModel.currentPhase >= 10) {
+                logPane.expanded = true;
+            }
         }
     }
 }

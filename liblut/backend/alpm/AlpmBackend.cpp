@@ -152,6 +152,9 @@ void AlpmBackend::commit() {
 
     m_process->disconnect();
 
+    m_workerDoneEmitted = false;
+    m_process->setProcessChannelMode(QProcess::MergedChannels);
+
     if (useWorker) {
         connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
             while (m_process->canReadLine()) {
@@ -160,13 +163,19 @@ void AlpmBackend::commit() {
         });
         connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, [this](int exitCode, QProcess::ExitStatus) {
-            if (exitCode != 0) {
-                emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("Fehlgeschlagen"), false});
+            QByteArray remaining = m_process->readAllStandardOutput();
+            if (!remaining.isEmpty()) {
+                QStringList lines = QString::fromUtf8(remaining).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+                for (const QString &line : lines) {
+                    parseWorkerOutputLine(line.trimmed());
+                }
+            }
+            if (exitCode != 0 && !m_workerDoneEmitted) {
+                emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("Fehlgeschlagen (Exit Code %1)").arg(exitCode), false});
                 emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("Worker beendet mit Code %1").arg(exitCode), false, {}, 0});
             }
         });
 
-        // Wenn wir nicht root sind und dev mode läuft: falls polkit-wrapper oder test-mode
         m_process->start(workerExe, {QStringLiteral("--sysupgrade")});
     } else {
         // Fallback pacman
@@ -207,6 +216,9 @@ void AlpmBackend::parseWorkerOutputLine(const QString &line) {
     if (doc.isObject()) {
         auto ev = deserializeEvent(doc.object());
         if (ev.has_value()) {
+            if (std::holds_alternative<TransactionDone>(*ev)) {
+                m_workerDoneEmitted = true;
+            }
             emit eventEmitted(*ev);
             return;
         }

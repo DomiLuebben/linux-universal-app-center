@@ -6,7 +6,7 @@ pkgdesc="Native system update tool with honest byte-weighted progress for DNF5, 
 arch=('x86_64')
 url="https://github.com/DomiLuebben/linux-update-tool"
 license=('GPL-3.0-or-later')
-depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'polkit-qt6' 'sqlite' 'pacman' 'pacman-contrib')
+depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'polkit-qt6' 'sqlite' 'pacman' 'pacman-contrib' 'kirigami' 'qqc2-desktop-style')
 makedepends=('cmake' 'gcc')
 checkdepends=('desktop-file-utils' 'appstream')
 
