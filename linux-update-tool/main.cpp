@@ -54,6 +54,8 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("updatesModel"), client->updatesModel());
     engine.rootContext()->setContextProperty(QStringLiteral("progressModel"), client->progressModel());
     engine.rootContext()->setContextProperty(QStringLiteral("logModel"), client->logModel());
+    engine.rootContext()->setContextProperty(QStringLiteral("installedModel"), client->installedModel());
+    engine.rootContext()->setContextProperty(QStringLiteral("historyModel"), client->historyModel());
 
     const QUrl url(QStringLiteral("qrc:/LinuxUpdateTool/qml/Main.qml"));
     QObject::connect(

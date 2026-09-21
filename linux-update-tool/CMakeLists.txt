@@ -7,6 +7,8 @@ qt_add_executable(linux-update-tool
     DaemonClient.cpp
     models/UpdatesModel.cpp
     models/LogModel.cpp
+    models/InstalledModel.cpp
+    models/HistoryModel.cpp
     theme/SystemPalette.cpp
     theme/Contrast.cpp
 )
@@ -54,3 +56,6 @@ target_link_libraries(linux-update-tool PRIVATE
 )
 
 install(TARGETS linux-update-tool DESTINATION /usr/bin)
+install(FILES ../data/org.linuxupdatetool.desktop DESTINATION /usr/share/applications)
+install(FILES ../data/org.linuxupdatetool.metainfo.xml DESTINATION /usr/share/metainfo)
+install(FILES ../data/icons/hicolor/scalable/apps/org.linuxupdatetool.svg DESTINATION /usr/share/icons/hicolor/scalable/apps)

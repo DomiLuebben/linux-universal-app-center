@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Linux Update Tool
+GenericName=System Updater
+Comment=Update system packages with honest byte-weighted progress
+Exec=linux-update-tool
+Icon=org.linuxupdatetool
+Terminal=false
+Type=Application
+Categories=Settings;PackageManager;
+Keywords=update;upgrade;package;pacman;dnf;apt;
+StartupNotify=true

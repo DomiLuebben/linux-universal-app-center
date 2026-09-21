@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.linuxupdatetool.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Linux Update Tool</name>
+  <summary>Native system updater with honest byte-weighted progress</summary>
+  <description>
+    <p>
+      Linux Update Tool is a native, modern system updater designed for Linux distributions (DNF5, APT, and Pacman).
+      It solves progress bar stutter and freeze by introducing a byte-weighted progress model, clear post-transaction phase resolution (initramfs, bootloader, kernel hooks), and system hygiene management.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Native backends for DNF5, APT, and Pacman without PackageKit overhead.</li>
+      <li>Monotonic, honest, byte-weighted progress tracking across all transaction phases.</li>
+      <li>Automatic post-transaction reporting with service restart hints and kernel reboot detection.</li>
+      <li>Clean separation of privileges with root daemon and unprivileged GUI.</li>
+      <li>System hygiene tools: clean orphan packages, manage package caches, and review configuration files.</li>
+      <li>Dynamic color palettes integrating seamlessly with KDE Plasma and modern desktop environments.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.linuxupdatetool.desktop</launchable>
+  <provides>
+    <binary>linux-update-tool</binary>
+  </provides>
+  <url type="homepage">https://github.com/DomiLuebben</url>
+  <developer id="org.linuxupdatetool">
+    <name>Dominik Lübben</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-09-21">
+      <description>
+        <p>Initial release of Linux Update Tool version 1.0.0.</p>
+      </description>
+    </release>
+  </releases>
+</component>

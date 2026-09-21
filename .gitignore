@@ -9,3 +9,6 @@ compile_commands.json
 ._*
 *.log
 *.sqlite
+pkg/
+src/
+*.pkg.tar.*

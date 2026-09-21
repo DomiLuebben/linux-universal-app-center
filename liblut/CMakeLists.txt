@@ -44,4 +44,5 @@ if(ALPM_FOUND)
     target_include_directories(lut-alpm-worker PRIVATE
         ${ALPM_INCLUDE_DIRS}
     )
+    install(TARGETS lut-alpm-worker DESTINATION /usr/libexec/linux-update-tool)
 endif()

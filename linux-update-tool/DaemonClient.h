@@ -10,6 +10,8 @@
 #include "liblut/progress/ProgressModel.h"
 #include "models/UpdatesModel.h"
 #include "models/LogModel.h"
+#include "models/InstalledModel.h"
+#include "models/HistoryModel.h"
 
 namespace lut {
 
@@ -35,6 +37,8 @@ public:
     ProgressModel *progressModel() { return &m_progressModel; }
     UpdatesModel *updatesModel() { return &m_updatesModel; }
     LogModel *logModel() { return &m_logModel; }
+    InstalledModel *installedModel() { return &m_installedModel; }
+    HistoryModel *historyModel() { return &m_historyModel; }
 
 public slots:
     void refreshUpdates();
@@ -69,6 +73,8 @@ private:
     ProgressModel m_progressModel;
     UpdatesModel m_updatesModel;
     LogModel m_logModel;
+    InstalledModel m_installedModel;
+    HistoryModel m_historyModel;
 };
 
 } // namespace lut
