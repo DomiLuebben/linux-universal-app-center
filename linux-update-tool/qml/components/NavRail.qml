@@ -11,7 +11,6 @@ Rectangle {
         { label: qsTr("Updates"), icon: "system-software-update", badgeKey: "updates" },
         { label: qsTr("Installiert"), icon: "package-x-generic", badgeKey: "installed" },
         { label: qsTr("Verlauf"), icon: "view-history", badgeKey: "none" },
-        { label: qsTr("AUR"), icon: "package-x-generic", badgeKey: "aur" },
         { label: qsTr("Protokoll"), icon: "utilities-terminal", badgeKey: "logs" },
         { label: qsTr("Einstellungen"), icon: "preferences-system", badgeKey: "none" }
     ]
@@ -124,7 +123,6 @@ Rectangle {
                         property int badgeCount: {
                             if (modelData.badgeKey === "updates") return updatesModel.totalCount;
                             if (modelData.badgeKey === "installed") return installedModel.orphanCount;
-                            if (modelData.badgeKey === "aur") return aurUpdates.count;
                             if (modelData.badgeKey === "logs") return logModel.count;
                             return 0;
                         }

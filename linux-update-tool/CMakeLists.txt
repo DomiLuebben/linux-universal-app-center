@@ -39,7 +39,6 @@ qt_add_qml_module(linux-update-tool
         qml/pages/Installed.qml
         qml/pages/History.qml
         qml/pages/Logs.qml
-        qml/pages/Aur.qml
         qml/pages/Settings.qml
 )
 
@@ -57,6 +56,7 @@ target_link_libraries(linux-update-tool PRIVATE
     Qt6::QuickControls2
     Qt6::Qml
     Qt6::DBus
+    Qt6::Network
     Qt6::Svg
 )
 

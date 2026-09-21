@@ -48,7 +48,6 @@ const QStringList &checkablePages() {
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Installed.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/History.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Logs.qml"),
-        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Aur.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Settings.qml"),
     };
     return pages;
@@ -209,6 +208,9 @@ int main(int argc, char *argv[]) {
     // Automatisch beim App-Start Metadaten prüfen und Updates laden
     if (!checkQml) {
         QTimer::singleShot(300, client, &lut::DaemonClient::refreshUpdates);
+        // AUR gleich mitprüfen: die Liste steht auf derselben Seite, also
+        // soll sie auch ohne zusätzlichen Klick gefüllt sein.
+        QTimer::singleShot(400, aur, &lut::AurUpdates::check);
     }
 
     return app.exec();

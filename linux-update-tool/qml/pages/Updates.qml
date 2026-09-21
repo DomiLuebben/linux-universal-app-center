@@ -77,8 +77,12 @@ Item {
                 PrimaryButton {
                     text: qsTr("Prüfen")
                     variant: "quiet"
-                    enabled: !daemonClient.isBusy
-                    onClicked: root.refreshRequested()
+                    enabled: !daemonClient.isBusy && !aurUpdates.busy
+                    onClicked: {
+                        root.refreshRequested();
+                        // Ein Knopf für beide Listen auf dieser Seite.
+                        if (aurUpdates.available) aurUpdates.check();
+                    }
                 }
             }
         }
@@ -173,33 +177,184 @@ Item {
         }
     }
 
-    // Paketliste
-    ListView {
-        id: pkgList
-        visible: updatesModel.totalCount > 0
+    // Gemeinsamer Listenbereich: Systemaktualisierungen, darunter durch einen
+    // Trennstrich abgesetzt die AUR-Pakete. Bewusst eine Seite statt zwei.
+    ScrollView {
+        id: listenBereich
         anchors.top: rollingNoticeCard.visible ? rollingNoticeCard.bottom : heroCard.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: Theme.s6
         anchors.topMargin: Theme.s2
-
-        model: updatesModel
         clip: true
-        reuseItems: true
-        spacing: 2
+        contentWidth: availableWidth
 
-        delegate: PackageRow {
-            width: pkgList.width
-            pkgName: model.name
-            versionTransition: model.versionTransition
-            downloadSizeFormatted: model.downloadSizeFormatted
-            repo: model.repo
-            isSecurity: model.isSecurity
-            isKernel: model.isKernel
-            selected: model.selected
-            showCheckbox: daemonClient.partialUpgradeSupported
-            onToggled: updatesModel.toggleSelection(index)
+        Column {
+            width: listenBereich.availableWidth
+            spacing: Theme.s3
+
+            Text {
+                text: qsTr("Systemaktualisierungen")
+                visible: updatesModel.totalCount > 0
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                color: Theme.textMuted
+            }
+
+            ListView {
+                id: pkgList
+                width: parent.width
+                height: contentHeight
+                visible: updatesModel.totalCount > 0
+                interactive: false          // scrollt über den umgebenden Bereich
+                model: updatesModel
+                reuseItems: true
+                spacing: 2
+
+                delegate: PackageRow {
+                    width: pkgList.width
+                    pkgName: model.name
+                    versionTransition: model.versionTransition
+                    downloadSizeFormatted: model.downloadSizeFormatted
+                    repo: model.repo
+                    isSecurity: model.isSecurity
+                    isKernel: model.isKernel
+                    selected: model.selected
+                    showCheckbox: daemonClient.partialUpgradeSupported
+                    onToggled: updatesModel.toggleSelection(index)
+                }
+            }
+
+            // Trennstrich zum AUR-Teil
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Theme.separator
+                visible: aurUpdates.available && updatesModel.totalCount > 0
+            }
+
+            Row {
+                width: parent.width
+                spacing: Theme.s3
+                visible: aurUpdates.available
+
+                Text {
+                    text: qsTr("AUR")
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                    color: Theme.textMuted
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                    width: parent.width - 120
+                    elide: Text.ElideRight
+                    text: aurUpdates.statusMessage
+                    font.pixelSize: 12
+                    color: Theme.textMuted
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+
+            ListView {
+                id: aurList
+                width: parent.width
+                height: contentHeight
+                visible: aurUpdates.available && aurUpdates.count > 0
+                interactive: false
+                model: aurUpdates
+                spacing: 2
+
+                delegate: Row {
+                    width: aurList.width
+                    height: 44
+                    spacing: Theme.s4
+
+                    Column {
+                        width: parent.width - aurKnopf.width - Theme.s4
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: model.name
+                            font.pixelSize: 14
+                            color: Theme.text
+                        }
+
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: model.installedVersion + " \u2192 " + model.availableVersion
+                            font.pixelSize: 12
+                            font.family: "JetBrains Mono, Hack, Noto Sans Mono, monospace"
+                            color: Theme.textMuted
+                        }
+                    }
+
+                    PrimaryButton {
+                        id: aurKnopf
+                        text: qsTr("Aktualisieren")
+                        variant: "quiet"
+                        enabled: !aurUpdates.busy
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: aurUpdates.prepare(model.name)
+                    }
+                }
+            }
+        }
+    }
+
+    // Der PKGBUILD wird vor dem Bauen gezeigt. Ein AUR-Bau fuehrt fremden Code
+    // mit den Rechten des Benutzers aus; das gehoert angesehen.
+    Dialog {
+        id: pkgbuildDialog
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(root.width - Theme.s7, 900)
+        height: Math.min(root.height - Theme.s7, 620)
+        modal: true
+        title: qsTr("PKGBUILD pruefen: %1").arg(paketName)
+
+        property string paketName: ""
+        property string pkgDir: ""
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Bauen und installieren")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Abbrechen")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+
+        onAccepted: aurUpdates.build(pkgbuildDialog.pkgDir)
+
+        ScrollView {
+            anchors.fill: parent
+            clip: true
+
+            TextArea {
+                id: pkgbuildAnsicht
+                readOnly: true
+                wrapMode: TextArea.NoWrap
+                font.family: "JetBrains Mono, Hack, Noto Sans Mono, monospace"
+                font.pixelSize: 12
+                color: Theme.textOnSunken
+            }
+        }
+    }
+
+    Connections {
+        target: aurUpdates
+        function onPrepared(name, pkgDir, pkgbuild, missingRepoDeps) {
+            pkgbuildDialog.paketName = name;
+            pkgbuildDialog.pkgDir = pkgDir;
+            pkgbuildAnsicht.text = pkgbuild;
+            pkgbuildDialog.open();
         }
     }
 }
