@@ -247,6 +247,31 @@ void configureRepositories(alpm_handle_t *handle) {
     emitEvent(lut::LogLine{lut::LogLevel::Info, QStringLiteral("alpm-worker"),
         QStringLiteral("Signaturprüfung aktiv (SigLevel=%1).").arg(defaultSig)});
 
+    // Pfade VOR dem Registrieren der Datenbanken setzen. libalpm initialisiert
+    // GPGME beim ersten signaturrelevanten Zugriff und merkt sich das Ergebnis;
+    // ein bis dahin ungesetztes gpgdir führt zu "Public keyring not found".
+    // GPGDir aus pacman.conf lesen statt hart zu verdrahten.
+    const QStringList gpgDirs = pacmanConfValues({QStringLiteral("GPGDir")});
+    const QByteArray gpgDir = (gpgDirs.isEmpty() ? QStringLiteral("/etc/pacman.d/gnupg/")
+                                                 : gpgDirs.first().trimmed()).toUtf8();
+    alpm_option_set_gpgdir(handle, gpgDir.constData());
+
+    const QStringList cacheDirs = pacmanConfValues({QStringLiteral("CacheDir")});
+    if (cacheDirs.isEmpty()) {
+        alpm_option_add_cachedir(handle, "/var/cache/pacman/pkg");
+    } else {
+        for (const QString &dir : cacheDirs) alpm_option_add_cachedir(handle, dir.trimmed().toUtf8().constData());
+    }
+
+    // /usr/share/libalpm/hooks/ setzt alpm_initialize() bereits selbst – hier
+    // darf nur der Verwalter-Hookordner dazukommen, sonst steht er doppelt drin.
+    const QStringList hookDirs = pacmanConfValues({QStringLiteral("HookDir")});
+    if (hookDirs.isEmpty()) {
+        alpm_option_add_hookdir(handle, "/etc/pacman.d/hooks/");
+    } else {
+        for (const QString &dir : hookDirs) alpm_option_add_hookdir(handle, dir.trimmed().toUtf8().constData());
+    }
+
     QProcess proc;
     proc.start(QStringLiteral("pacman-conf"), {QStringLiteral("--repo-list")});
     if (proc.waitForFinished(3000)) {
@@ -277,10 +302,6 @@ void configureRepositories(alpm_handle_t *handle) {
         }
     }
 
-    alpm_option_add_cachedir(handle, "/var/cache/pacman/pkg");
-    alpm_option_add_hookdir(handle, "/etc/pacman.d/hooks");
-    alpm_option_add_hookdir(handle, "/usr/share/libalpm/hooks");
-    alpm_option_set_gpgdir(handle, "/etc/pacman.d/gnupg");
 }
 #endif
 

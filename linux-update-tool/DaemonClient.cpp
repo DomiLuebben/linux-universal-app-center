@@ -11,6 +11,9 @@ namespace lut {
 
 DaemonClient::DaemonClient(QObject *parent)
     : QObject(parent) {
+    // Einziger Weg für LogLine ins Protokoll. handleEvent darf LogLine NICHT
+    // zusätzlich anhängen: processEvent() läuft dort am Ende ohnehin durch und
+    // löst logAdded aus – sonst steht jede Worker-Zeile doppelt im Protokoll.
     connect(&m_progressModel, &ProgressModel::logAdded, &m_logModel, &LogModel::appendLog);
     connect(&m_progressModel, &ProgressModel::questionReceived, this, &DaemonClient::questionPrompt);
     connect(&m_installedModel, &InstalledModel::cleanupRequested, this, [this](const QString &command) {
@@ -113,8 +116,6 @@ void DaemonClient::handleEvent(const Event &event) {
         m_statusMessage = plan.warnings.join(QLatin1Char(' '));
         m_lastCheckedString = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm"));
         emit statusChanged();
-    } else if (std::holds_alternative<LogLine>(event)) {
-        m_logModel.appendLog(std::get<LogLine>(event));
     } else if (std::holds_alternative<PhaseChanged>(event)) {
         const auto &phase = std::get<PhaseChanged>(event);
         LogLevel l = (phase.phase == Phase::Failed) ? LogLevel::Error : LogLevel::Info;

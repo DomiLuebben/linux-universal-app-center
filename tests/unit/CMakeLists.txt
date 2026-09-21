@@ -52,3 +52,22 @@ add_test(NAME list_perf_test COMMAND list_perf_test)
 
 add_lut_test(dnf5_backend_test)
 add_lut_test(apt_metadata_test)
+
+# Prüft die Ereignis-Verdrahtung des GUI-Clients ohne laufenden Daemon.
+add_executable(daemonclient_log_test
+    daemonclient_log_test.cpp
+    ../../linux-update-tool/DaemonClient.cpp
+    ../../linux-update-tool/models/UpdatesModel.cpp
+    ../../linux-update-tool/models/LogModel.cpp
+    ../../linux-update-tool/models/InstalledModel.cpp
+    ../../linux-update-tool/models/HistoryModel.cpp
+)
+target_include_directories(daemonclient_log_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(daemonclient_log_test PRIVATE
+    liblut
+    Qt6::Core
+    Qt6::Gui
+    Qt6::DBus
+    Qt6::Test
+)
+add_test(NAME daemonclient_log_test COMMAND daemonclient_log_test)
