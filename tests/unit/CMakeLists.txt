@@ -19,3 +19,28 @@ add_lut_test(validation_test)
 add_lut_test(history_test)
 add_lut_test(replay_test)
 add_lut_test(distro_detect_test)
+
+# Theme & Contrast test (needs Qt6::Gui)
+add_executable(theme_contrast_test
+    theme_contrast_test.cpp
+    ../../linux-update-tool/theme/Contrast.cpp
+)
+target_include_directories(theme_contrast_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(theme_contrast_test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_test(NAME theme_contrast_test COMMAND theme_contrast_test)
+
+add_executable(list_perf_test
+    list_perf_test.cpp
+    ../../linux-update-tool/models/UpdatesModel.cpp
+)
+target_include_directories(list_perf_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(list_perf_test PRIVATE
+    liblut
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME list_perf_test COMMAND list_perf_test)

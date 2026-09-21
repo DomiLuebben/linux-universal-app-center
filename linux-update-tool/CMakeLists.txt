@@ -4,6 +4,11 @@ qt_policy(SET QTP0004 NEW)
 
 qt_add_executable(linux-update-tool
     main.cpp
+    DaemonClient.cpp
+    models/UpdatesModel.cpp
+    models/LogModel.cpp
+    theme/SystemPalette.cpp
+    theme/Contrast.cpp
 )
 
 qt_add_qml_module(linux-update-tool
@@ -12,6 +17,30 @@ qt_add_qml_module(linux-update-tool
     RESOURCE_PREFIX "/"
     QML_FILES
         qml/Main.qml
+        qml/components/PrimaryButton.qml
+        qml/components/Chip.qml
+        qml/components/Card.qml
+        qml/components/StatCard.qml
+        qml/components/PackageRow.qml
+        qml/components/SegmentedProgress.qml
+        qml/components/PhaseStepper.qml
+        qml/components/TaskList.qml
+        qml/components/LogPane.qml
+        qml/components/QuestionCard.qml
+        qml/components/EmptyState.qml
+        qml/components/Sparkline.qml
+        qml/components/NavRail.qml
+        qml/pages/Updates.qml
+        qml/pages/Transaction.qml
+        qml/pages/Report.qml
+        qml/pages/Installed.qml
+        qml/pages/History.qml
+        qml/pages/Settings.qml
+)
+
+target_include_directories(linux-update-tool PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(linux-update-tool PRIVATE
