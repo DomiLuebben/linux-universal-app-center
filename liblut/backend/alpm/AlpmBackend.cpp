@@ -2,7 +2,17 @@
 #include <QRegularExpression>
 #include <QDebug>
 #include <QDir>
+#include <QDirIterator>
 #include <QStandardPaths>
+#include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QFile>
+#include <sys/utsname.h>
+
+#ifdef HAVE_ALPM
+#include <alpm.h>
+#endif
 
 namespace lut {
 
@@ -52,7 +62,7 @@ void AlpmBackend::planUpgradeAll(const UpgradeOptions &) {
 
     QProcess proc;
     // checkupdates oder pacman -Qu
-    proc.start(QStringLiteral("checkupdates"));
+    proc.start(QStringLiteral("checkupdates"), {QStringLiteral("--nocolor")});
     if (!proc.waitForStarted(2000)) {
         proc.start(QStringLiteral("pacman"), {QStringLiteral("-Qu")});
     }
@@ -64,8 +74,8 @@ void AlpmBackend::planUpgradeAll(const UpgradeOptions &) {
 
     // Format von pacman -Qu / checkupdates:
     // name alt -> neu [repo]
-    // z.B.: linux 6.17.3-arch1 -> 6.17.4-arch1
-    QRegularExpression re(QStringLiteral(R"(^([a-zA-Z0-9._+-]+)\s+([^\s]+)\s+->\s+([^\s]+))"));
+    // z.B.: linux-cachyos 6.13.4-arch1 -> 6.13.5-arch1 [cachyos]
+    QRegularExpression re(QStringLiteral(R"(^([a-zA-Z0-9._+-]+)\s+([^\s]+)\s+->\s+([^\s]+)(?:\s+\[([a-zA-Z0-9._+-]+)\])?)"));
 
     while (proc.canReadLine()) {
         QString line = QString::fromUtf8(proc.readLine()).trimmed();
@@ -75,6 +85,9 @@ void AlpmBackend::planUpgradeAll(const UpgradeOptions &) {
             op.name = match.captured(1);
             op.version = match.captured(2);
             op.newVersion = match.captured(3);
+            if (match.lastCapturedIndex() >= 4) {
+                op.repo = match.captured(4);
+            }
             op.id = QStringLiteral("%1-%2").arg(op.name, op.newVersion);
             op.kind = PackageOp::Kind::Upgrade;
             op.isKernel = PackageOp::detectIsKernel(op.name);
@@ -96,7 +109,7 @@ void AlpmBackend::planUpgradeAll(const UpgradeOptions &) {
     plan.downloadBytes = totalDownload;
     plan.installedSizeDelta = totalInstalled;
     if (!capabilities().partialUpgrade) {
-        plan.warnings.append(QStringLiteral("Arch Linux unterstützt nur vollständige Systemaktualisierungen."));
+        plan.warnings.append(QStringLiteral("Arch Linux / CachyOS: Es werden immer alle Pakete gemeinsam aktualisiert (Rolling Release)."));
     }
 
     emit eventEmitted(plan);
@@ -106,11 +119,57 @@ void AlpmBackend::planUpgradeAll(const UpgradeOptions &) {
 void AlpmBackend::planInstall(const QStringList &) {}
 void AlpmBackend::planRemove(const QStringList &) {}
 
+QString AlpmBackend::findWorkerExecutable() const {
+    QString appDir = QCoreApplication::applicationDirPath();
+    QStringList candidates = {
+        appDir + QStringLiteral("/lut-alpm-worker"),
+        appDir + QStringLiteral("/../liblut/lut-alpm-worker"),
+        QStringLiteral("/usr/libexec/linux-update-tool/lut-alpm-worker"),
+        QStringLiteral("/usr/lib/linux-update-tool/lut-alpm-worker")
+    };
+
+    for (const QString &c : candidates) {
+        if (QFile::exists(c)) {
+            return c;
+        }
+    }
+
+    return QStandardPaths::findExecutable(QStringLiteral("lut-alpm-worker"));
+}
+
 void AlpmBackend::commit() {
     emit eventEmitted(PhaseChanged{Phase::Download, QStringLiteral("Pakete holen"), true});
 
+    QString workerExe = findWorkerExecutable();
+    bool useWorker = !workerExe.isEmpty();
+
     if (!m_process) {
         m_process = new QProcess(this);
+    } else if (m_process->state() != QProcess::NotRunning) {
+        m_process->kill();
+        m_process->waitForFinished(500);
+    }
+
+    m_process->disconnect();
+
+    if (useWorker) {
+        connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
+            while (m_process->canReadLine()) {
+                parseWorkerOutputLine(QString::fromUtf8(m_process->readLine()).trimmed());
+            }
+        });
+        connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this](int exitCode, QProcess::ExitStatus) {
+            if (exitCode != 0) {
+                emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("Fehlgeschlagen"), false});
+                emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("Worker beendet mit Code %1").arg(exitCode), false, {}, 0});
+            }
+        });
+
+        // Wenn wir nicht root sind und dev mode läuft: falls polkit-wrapper oder test-mode
+        m_process->start(workerExe, {QStringLiteral("--sysupgrade")});
+    } else {
+        // Fallback pacman
         connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
             while (m_process->canReadLine()) {
                 parsePacmanOutput(QString::fromUtf8(m_process->readLine()).trimmed());
@@ -126,9 +185,9 @@ void AlpmBackend::commit() {
                 emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("Pacman beendet mit Code %1").arg(exitCode), false, {}, 0});
             }
         });
-    }
 
-    m_process->start(QStringLiteral("pacman"), {QStringLiteral("-Syu"), QStringLiteral("--noconfirm")});
+        m_process->start(QStringLiteral("pacman"), {QStringLiteral("-Syu"), QStringLiteral("--noconfirm")});
+    }
 }
 
 void AlpmBackend::cancel() {
@@ -140,6 +199,22 @@ void AlpmBackend::cancel() {
 }
 
 void AlpmBackend::answerQuestion(const QString &, const QJsonObject &) {}
+
+void AlpmBackend::parseWorkerOutputLine(const QString &line) {
+    if (line.isEmpty()) return;
+
+    QJsonDocument doc = QJsonDocument::fromJson(line.toUtf8());
+    if (doc.isObject()) {
+        auto ev = deserializeEvent(doc.object());
+        if (ev.has_value()) {
+            emit eventEmitted(*ev);
+            return;
+        }
+    }
+
+    // Fallback falls plain log line
+    emit eventEmitted(LogLine{LogLevel::Info, QStringLiteral("worker"), line});
+}
 
 void AlpmBackend::parsePacmanOutput(const QString &line) {
     emit eventEmitted(LogLine{LogLevel::Info, QStringLiteral("pacman"), line});
@@ -159,16 +234,150 @@ QList<PackageOp> AlpmBackend::availableUpdates() {
     return m_plannedOps;
 }
 
-QList<InstalledPackage> AlpmBackend::installedPackages(const QString &) {
-    return {};
+QList<InstalledPackage> AlpmBackend::installedPackages(const QString &query) {
+    QList<InstalledPackage> result;
+
+#ifdef HAVE_ALPM
+    alpm_errno_t err;
+    alpm_handle_t *handle = alpm_initialize("/", "/var/lib/pacman", &err);
+    if (!handle) {
+        return result;
+    }
+
+    struct utsname uts;
+    QString runningKernel;
+    if (uname(&uts) == 0) {
+        runningKernel = QString::fromUtf8(uts.release);
+    }
+
+    alpm_db_t *localdb = alpm_get_localdb(handle);
+    const alpm_list_t *pkgs = alpm_db_get_pkgcache(localdb);
+    QString qLower = query.trimmed().toLower();
+
+    for (const alpm_list_t *i = pkgs; i; i = alpm_list_next(i)) {
+        alpm_pkg_t *pkg = static_cast<alpm_pkg_t *>(i->data);
+        QString name = QString::fromUtf8(alpm_pkg_get_name(pkg));
+        QString ver = QString::fromUtf8(alpm_pkg_get_version(pkg));
+        QString desc = QString::fromUtf8(alpm_pkg_get_desc(pkg) ? alpm_pkg_get_desc(pkg) : "");
+
+        if (!qLower.isEmpty()) {
+            if (!name.toLower().contains(qLower) && !desc.toLower().contains(qLower)) {
+                continue;
+            }
+        }
+
+        InstalledPackage ip;
+        ip.name = name;
+        ip.version = ver;
+        ip.id = QStringLiteral("%1-%2").arg(name, ver);
+        ip.description = desc;
+        ip.installedSize = alpm_pkg_get_isize(pkg);
+        ip.arch = QString::fromUtf8(alpm_pkg_get_arch(pkg) ? alpm_pkg_get_arch(pkg) : "x86_64");
+
+        // Verwaiste Pakete erkennen
+        if (alpm_pkg_get_reason(pkg) == ALPM_PKG_REASON_DEPEND) {
+            alpm_list_t *reqBy = alpm_pkg_compute_requiredby(pkg);
+            alpm_list_t *optFor = alpm_pkg_compute_optionalfor(pkg);
+            if (!reqBy && !optFor) {
+                ip.isOrphan = true;
+            }
+            if (reqBy) FREELIST(reqBy);
+            if (optFor) FREELIST(optFor);
+        }
+
+        // Alter Kernel Erkennung
+        if (PackageOp::detectIsKernel(name) && !ver.contains(runningKernel)) {
+            ip.isOldKernel = true;
+        }
+
+        result.append(ip);
+    }
+
+    alpm_release(handle);
+#endif
+
+    return result;
+}
+
+QList<InstalledPackage> AlpmBackend::queryOrphans() {
+    QList<InstalledPackage> orphans;
+    QList<InstalledPackage> all = installedPackages();
+    for (const auto &pkg : all) {
+        if (pkg.isOrphan) {
+            orphans.append(pkg);
+        }
+    }
+    return orphans;
+}
+
+qint64 AlpmBackend::queryCleanableCacheBytes() const {
+    qint64 total = 0;
+    QDir cacheDir(QStringLiteral("/var/cache/pacman/pkg"));
+    QFileInfoList entries = cacheDir.entryInfoList(QDir::Files);
+    for (const auto &fi : entries) {
+        total += fi.size();
+    }
+    return total;
+}
+
+QStringList AlpmBackend::detectPacnewFiles() const {
+    QStringList result;
+    QDir etcDir(QStringLiteral("/etc"));
+    QStringList filters = {QStringLiteral("*.pacnew"), QStringLiteral("*.pacsave")};
+    QDirIterator it(QStringLiteral("/etc"), filters, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        result.append(it.next());
+    }
+    return result;
 }
 
 QList<ChangelogEntry> AlpmBackend::changelog(const QString &) {
     return {};
 }
 
-QList<HistoryEntry> AlpmBackend::history(int) {
-    return {};
+QList<HistoryEntry> AlpmBackend::history(int limit) {
+    QList<HistoryEntry> result;
+    QFile file(QStringLiteral("/var/log/pacman.log"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return result;
+    }
+
+    // Liest Transaktionen aus pacman.log rückwärts
+    QByteArray content = file.readAll();
+    file.close();
+
+    QList<QByteArray> lines = content.split('\n');
+    QRegularExpression transStartRe(QStringLiteral(R"(\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})\]\s+\[(ALPM|PACMAN)\]\s+transaction (started|completed))"));
+
+    HistoryEntry currentEntry;
+    int entryCounter = 1;
+
+    for (int i = lines.size() - 1; i >= 0 && result.size() < limit; --i) {
+        QString line = QString::fromUtf8(lines.at(i)).trimmed();
+        if (line.isEmpty()) continue;
+
+        auto match = transStartRe.match(line);
+        if (match.hasMatch()) {
+            QString timestampStr = match.captured(1);
+            QString action = match.captured(3);
+
+            if (action == QLatin1String("completed")) {
+                currentEntry = HistoryEntry();
+                currentEntry.id = entryCounter++;
+                currentEntry.timestamp = QDateTime::fromString(timestampStr, Qt::ISODate);
+                currentEntry.result = QStringLiteral("Success");
+                currentEntry.canUndo = false;
+            } else if (action == QLatin1String("started") && currentEntry.id > 0) {
+                currentEntry.command = QStringLiteral("Systemaktualisierung");
+                result.append(currentEntry);
+                currentEntry = HistoryEntry();
+            }
+        } else if (currentEntry.id > 0 && line.contains(QLatin1String("[ALPM] upgraded"))) {
+            currentEntry.packagesAltered++;
+        }
+    }
+
+    return result;
 }
 
 } // namespace lut

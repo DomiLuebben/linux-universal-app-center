@@ -27,7 +27,13 @@ public:
     QList<ChangelogEntry> changelog(const QString &pkgId) override;
     QList<HistoryEntry> history(int limit = 20) override;
 
+    QList<InstalledPackage> queryOrphans();
+    qint64 queryCleanableCacheBytes() const;
+    QStringList detectPacnewFiles() const;
+
 private:
+    QString findWorkerExecutable() const;
+    void parseWorkerOutputLine(const QString &line);
     void parsePacmanOutput(const QString &line);
 
     QProcess *m_process = nullptr;

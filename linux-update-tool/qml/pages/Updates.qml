@@ -82,11 +82,44 @@ Item {
         message: qsTr("Alle Pakete entsprechen dem neuesten Stand der Paketquellen.")
     }
 
+    // Rolling Release Hinweis (Arch / CachyOS)
+    Card {
+        id: rollingNoticeCard
+        visible: !daemonClient.partialUpgradeSupported && updatesModel.totalCount > 0
+        anchors.top: heroCard.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: Theme.s6
+        anchors.topMargin: Theme.s2
+        height: 52
+
+        Row {
+            anchors.fill: parent
+            anchors.margins: Theme.s3
+            spacing: Theme.s4
+
+            Text {
+                text: "ℹ"
+                font.pixelSize: 18
+                font.weight: Font.Bold
+                color: Theme.accent
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                text: qsTr("Arch Linux / CachyOS (Rolling Release): Alle Pakete werden zusammen aktualisiert, um Systemkonsistenz zu gewährleisten.")
+                font.pixelSize: 13
+                color: Theme.textMuted
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
     // Paketliste
     ListView {
         id: pkgList
         visible: updatesModel.totalCount > 0
-        anchors.top: heroCard.bottom
+        anchors.top: rollingNoticeCard.visible ? rollingNoticeCard.bottom : heroCard.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
