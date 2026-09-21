@@ -7,6 +7,8 @@ add_library(liblut STATIC
     progress/Eta.cpp
     progress/ProgressModel.cpp
     backend/Validation.cpp
+    backend/Backend.cpp
+    backend/replay/ReplayBackend.cpp
     history/HistoryDb.cpp
 )
 

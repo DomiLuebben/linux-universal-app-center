@@ -1,0 +1,9 @@
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "RefreshMetadata", "label": "Metadaten laden", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Resolve", "label": "Auflösen", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PlanReady", "data": {"ops": [{"id": "neovim-0.10.0-1.fc44.x86_64", "name": "neovim", "version": "0.9.5", "newVersion": "0.10.0", "arch": "x86_64", "repo": "updates", "summary": "Vim-fork focused on extensibility", "kind": "Upgrade", "downloadSize": 8000000, "installedSize": 25000000, "isSecurity": false, "isKernel": false, "userRequested": true}], "downloadBytes": 8000000, "installedSizeDelta": 2000000, "warnings": []}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Download", "label": "Pakete laden", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "neovim-0.10.0-1.fc44.x86_64", "kind": "Upgrade", "weight": 8000000}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "LogLine", "data": {"level": "Error", "source": "network", "text": "Fehler beim Herunterladen von neovim: Verbindung zum Mirror abgebrochen (Connection reset by peer)"}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "neovim-0.10.0-1.fc44.x86_64", "ok": false, "error": "Connection reset by peer"}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Failed", "label": "Download fehlgeschlagen", "cancellable": false}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "TransactionDone", "data": {"result": "Failed", "summary": "Netzwerkfehler beim Herunterladen der Pakete", "rebootRequired": false, "servicesNeedingRestart": [], "historyId": 103}}}

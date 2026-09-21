@@ -1,0 +1,28 @@
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "RefreshMetadata", "label": "Repo-Metadaten laden", "cancellable": true}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Resolve", "label": "Abhängigkeiten berechnen", "cancellable": true}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "PlanReady", "data": {"ops": [{"id": "kernel-core-6.17.4-200.fc44.x86_64", "name": "kernel-core", "version": "6.17.3-200.fc44", "newVersion": "6.17.4-200.fc44", "arch": "x86_64", "repo": "updates", "summary": "The Linux kernel core", "kind": "Upgrade", "downloadSize": 38000000, "installedSize": 95000000, "isSecurity": true, "isKernel": true, "userRequested": true}, {"id": "kernel-modules-core-6.17.4-200.fc44.x86_64", "name": "kernel-modules-core", "version": "6.17.3-200.fc44", "newVersion": "6.17.4-200.fc44", "arch": "x86_64", "repo": "updates", "summary": "Core kernel modules", "kind": "Upgrade", "downloadSize": 32000000, "installedSize": 45000000, "isSecurity": true, "isKernel": true, "userRequested": false}], "downloadBytes": 70000000, "installedSizeDelta": 15000000, "warnings": ["Neustart nach Abschluss erforderlich"]}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Download", "label": "Kernel-Pakete herunterladen", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "kernel-core-6.17.4-200.fc44.x86_64", "kind": "Upgrade", "weight": 38000000}}}
+{"delay_ms": 25, "event": {"v": 1, "type": "DownloadThroughput", "data": {"bytesPerSecond": 15728640, "totalDone": 38000000, "totalTotal": 70000000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "kernel-core-6.17.4-200.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "kernel-modules-core-6.17.4-200.fc44.x86_64", "kind": "Upgrade", "weight": 32000000}}}
+{"delay_ms": 25, "event": {"v": 1, "type": "DownloadThroughput", "data": {"bytesPerSecond": 15728640, "totalDone": 70000000, "totalTotal": 70000000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "kernel-modules-core-6.17.4-200.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Verify", "label": "Prüfsummen und GPG-Signaturen validieren", "cancellable": true}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Commit", "label": "Kernel installieren (nicht unterbrechbar)", "cancellable": false}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "kernel-modules-core-6.17.4-200.fc44.x86_64", "kind": "Upgrade", "weight": 45000000}}}
+{"delay_ms": 25, "event": {"v": 1, "type": "ItemProgress", "data": {"pkgId": "kernel-modules-core-6.17.4-200.fc44.x86_64", "done": 45000000, "total": 45000000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "kernel-modules-core-6.17.4-200.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "kernel-core-6.17.4-200.fc44.x86_64", "kind": "Upgrade", "weight": 95000000}}}
+{"delay_ms": 30, "event": {"v": 1, "type": "ItemProgress", "data": {"pkgId": "kernel-core-6.17.4-200.fc44.x86_64", "done": 95000000, "total": 95000000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "kernel-core-6.17.4-200.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "PostTransaction", "label": "System-Nachbereitung (Initramfs & Bootloader)", "cancellable": false}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ScriptletStarted", "data": {"pkgId": "kernel-core", "scriptletName": "dracut"}}}
+{"delay_ms": 30, "event": {"v": 1, "type": "LogLine", "data": {"level": "Info", "source": "dracut", "text": "dracut: Creating initramfs for 6.17.4-200.fc44.x86_64"}}}
+{"delay_ms": 40, "event": {"v": 1, "type": "ScriptletFinished", "data": {"pkgId": "kernel-core", "scriptletName": "dracut", "exitCode": 0}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ScriptletStarted", "data": {"pkgId": "kernel-core", "scriptletName": "kernel-install"}}}
+{"delay_ms": 25, "event": {"v": 1, "type": "ScriptletFinished", "data": {"pkgId": "kernel-core", "scriptletName": "kernel-install", "exitCode": 0}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ScriptletStarted", "data": {"pkgId": "grub2", "scriptletName": "grub2-mkconfig"}}}
+{"delay_ms": 25, "event": {"v": 1, "type": "ScriptletFinished", "data": {"pkgId": "grub2", "scriptletName": "grub2-mkconfig", "exitCode": 0}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Cleanup", "label": "Temporäre Daten bereinigen", "cancellable": false}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "TransactionDone", "data": {"result": "Success", "summary": "Kernel 6.17.4-200 erfolgreich installiert", "rebootRequired": true, "servicesNeedingRestart": [], "historyId": 102}}}

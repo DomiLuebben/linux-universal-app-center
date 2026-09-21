@@ -1,0 +1,7 @@
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "RefreshMetadata", "label": "Metadaten laden", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Resolve", "label": "Abhängigkeiten prüfen", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PlanReady", "data": {"ops": [{"id": "libreoffice-24.8.0.x86_64", "name": "libreoffice", "version": "24.2.0", "newVersion": "24.8.0", "arch": "x86_64", "repo": "updates", "summary": "Office suite", "kind": "Upgrade", "downloadSize": 250000000, "installedSize": 600000000, "isSecurity": false, "isKernel": false, "userRequested": true}], "downloadBytes": 250000000, "installedSizeDelta": 10000000, "warnings": []}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Download", "label": "Großes Paket laden", "cancellable": true}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "DownloadThroughput", "data": {"bytesPerSecond": 5242880, "totalDone": 20000000, "totalTotal": 250000000}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Cancelled", "label": "Durch Benutzer abgebrochen", "cancellable": false}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "TransactionDone", "data": {"result": "Cancelled", "summary": "Transaktion auf Benutzerwunsch abgebrochen", "rebootRequired": false, "servicesNeedingRestart": [], "historyId": 106}}}

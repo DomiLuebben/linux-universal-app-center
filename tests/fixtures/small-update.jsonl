@@ -1,0 +1,23 @@
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "RefreshMetadata", "label": "Paketquellen aktualisieren", "cancellable": true}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Resolve", "label": "Abhängigkeiten prüfen", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PlanReady", "data": {"ops": [{"id": "curl-8.10.0-1.fc44.x86_64", "name": "curl", "version": "8.9.0-1.fc44", "newVersion": "8.10.0-1.fc44", "arch": "x86_64", "repo": "updates", "summary": "A utility for getting files from HTTP/FTP servers", "kind": "Upgrade", "downloadSize": 450000, "installedSize": 1200000, "isSecurity": false, "isKernel": false, "userRequested": true}, {"id": "libcurl-8.10.0-1.fc44.x86_64", "name": "libcurl", "version": "8.9.0-1.fc44", "newVersion": "8.10.0-1.fc44", "arch": "x86_64", "repo": "updates", "summary": "A library for getting files from HTTP/FTP servers", "kind": "Upgrade", "downloadSize": 850000, "installedSize": 1800000, "isSecurity": false, "isKernel": false, "userRequested": false}], "downloadBytes": 1300000, "installedSizeDelta": 300000, "warnings": []}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Download", "label": "Pakete herunterladen", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "curl-8.10.0-1.fc44.x86_64", "kind": "Upgrade", "weight": 450000}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "DownloadThroughput", "data": {"bytesPerSecond": 10485760, "totalDone": 450000, "totalTotal": 1300000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "curl-8.10.0-1.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "libcurl-8.10.0-1.fc44.x86_64", "kind": "Upgrade", "weight": 850000}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "DownloadThroughput", "data": {"bytesPerSecond": 10485760, "totalDone": 1300000, "totalTotal": 1300000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "libcurl-8.10.0-1.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Verify", "label": "Signaturen prüfen", "cancellable": true}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Commit", "label": "Pakete installieren", "cancellable": false}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "libcurl-8.10.0-1.fc44.x86_64", "kind": "Upgrade", "weight": 1800000}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ItemProgress", "data": {"pkgId": "libcurl-8.10.0-1.fc44.x86_64", "done": 1800000, "total": 1800000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "libcurl-8.10.0-1.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ItemStarted", "data": {"pkgId": "curl-8.10.0-1.fc44.x86_64", "kind": "Upgrade", "weight": 1200000}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ItemProgress", "data": {"pkgId": "curl-8.10.0-1.fc44.x86_64", "done": 1200000, "total": 1200000}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "ItemFinished", "data": {"pkgId": "curl-8.10.0-1.fc44.x86_64", "ok": true, "error": ""}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "PostTransaction", "label": "Nachbereitung", "cancellable": false}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "ScriptletStarted", "data": {"pkgId": "libcurl", "scriptletName": "ldconfig"}}}
+{"delay_ms": 20, "event": {"v": 1, "type": "ScriptletFinished", "data": {"pkgId": "libcurl", "scriptletName": "ldconfig", "exitCode": 0}}}
+{"delay_ms": 15, "event": {"v": 1, "type": "PhaseChanged", "data": {"phase": "Cleanup", "label": "Aufräumen", "cancellable": false}}}
+{"delay_ms": 10, "event": {"v": 1, "type": "TransactionDone", "data": {"result": "Success", "summary": "2 Pakete erfolgreich aktualisiert", "rebootRequired": false, "servicesNeedingRestart": [], "historyId": 101}}}
