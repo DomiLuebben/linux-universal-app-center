@@ -14,7 +14,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.margins: Theme.s6
-        height: 140
+        height: 210
 
         Row {
             anchors.fill: parent
@@ -33,17 +33,17 @@ Item {
             Column {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.s2
-                width: parent.width - 320
+                width: parent.width - 390
 
                 Text {
-                    text: updatesModel.totalCount === 1 ? qsTr("Aktualisierung verfügbar") : qsTr("Aktualisierungen verfügbar")
+                    text: qsTr("Geplante Paketänderungen")
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
                     color: Theme.text
                 }
 
                 Text {
-                    text: qsTr("%1 laden · %2 mehr belegt · zuletzt geprüft um %3 Uhr")
+                    text: qsTr("%1 noch laden · Speicheränderung %2 · geprüft um %3 Uhr")
                           .arg(updatesModel.totalDownloadFormatted)
                           .arg(updatesModel.totalInstalledDeltaFormatted)
                           .arg(daemonClient.lastCheckedString)
@@ -58,28 +58,76 @@ Item {
                 spacing: Theme.s3
 
                 PrimaryButton {
-                    text: qsTr("Aktualisieren")
+                    text: qsTr("Plan ausführen")
                     variant: "primary"
-                    enabled: updatesModel.selectedCount > 0
+                    enabled: daemonClient.hasPlan && !daemonClient.isBusy
                     onClicked: root.startUpgradeRequested()
                 }
 
                 PrimaryButton {
                     text: qsTr("Prüfen")
                     variant: "quiet"
+                    enabled: !daemonClient.isBusy
                     onClicked: root.refreshRequested()
                 }
             }
         }
     }
 
+    Text {
+        anchors.left: heroCard.left
+        anchors.right: heroCard.right
+        anchors.bottom: heroCard.bottom
+        anchors.margins: Theme.s4
+        text: daemonClient.statusMessage
+        color: Theme.textMuted
+        font.pixelSize: 12
+        wrapMode: Text.Wrap
+    }
+
+    Button {
+        visible: daemonClient.dnf5Commands.length > 0
+        enabled: !daemonClient.isBusy
+        anchors.top: heroCard.top
+        anchors.right: heroCard.right
+        anchors.margins: Theme.s3
+        text: qsTr("Paketaktion …")
+        onClicked: actionDialog.open()
+    }
+
+    Dialog {
+        id: actionDialog
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 40, 520)
+        title: qsTr("DNF5-Paketaktion vorbereiten")
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: daemonClient.planDnf5(commandBox.currentText, packageInput.text,
+                                         commandBox.currentText === "upgrade" && securityOnly.checked,
+                                         commandBox.currentText === "upgrade" && excludeKernel.checked)
+        Column {
+            width: parent.width
+            spacing: 12
+            ComboBox { id: commandBox; width: parent.width; model: daemonClient.dnf5Commands }
+            TextField { id: packageInput; width: parent.width; placeholderText: qsTr("Paketnamen, Gruppen-ID oder Transaktionsnummer") }
+            CheckBox { id: securityOnly; visible: commandBox.currentText === "upgrade"; text: qsTr("Nur Sicherheitsupdates") }
+            CheckBox { id: excludeKernel; visible: commandBox.currentText === "upgrade"; text: qsTr("Kernel ausschließen") }
+            Text {
+                width: parent.width
+                text: qsTr("Die Vorbereitung lädt benötigte Pakete herunter. Danach zeigt die Liste alle Änderungen zur Bestätigung.")
+                wrapMode: Text.Wrap
+                color: Theme.text
+            }
+        }
+    }
+
     // Leerer Zustand
     EmptyState {
-        visible: updatesModel.totalCount === 0
+        visible: updatesModel.totalCount === 0 && !daemonClient.isBusy
         anchors.top: heroCard.bottom
         anchors.topMargin: Theme.s7
-        title: qsTr("System ist aktuell")
-        message: qsTr("Alle Pakete entsprechen dem neuesten Stand der Paketquellen.")
+        title: daemonClient.hasPlan ? qsTr("Keine Paketänderungen") : qsTr("Noch kein bestätigter Plan")
+        message: daemonClient.hasPlan ? qsTr("Der letzte Plan enthält keine Paketänderungen.") : qsTr("Mit Prüfen einen aktuellen Plan erstellen.")
     }
 
     // Rolling Release Hinweis (Arch / CachyOS)

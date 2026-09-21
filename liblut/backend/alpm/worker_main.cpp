@@ -18,6 +18,7 @@
 #endif
 
 #include "liblut/protocol/events.h"
+#include "liblut/backend/alpm/SigLevelParser.h"
 
 namespace {
 
@@ -70,8 +71,11 @@ QStringList detectServicesNeedingRestart() {
 #ifdef HAVE_ALPM
 void setupAlpmCallbacks(alpm_handle_t *handle, QStringList &createdPacnewFiles) {
     alpm_option_set_logcb(handle, [](void *, alpm_loglevel_t level, const char *fmt, va_list args) {
-        if (level & ALPM_LOG_DEBUG) {
-            return; // Debug-Meldungen nicht über D-Bus streamen
+        // Debug- UND Function-Trace unterdrücken: beide sind hochfrequent und haben
+        // zusammen die D-Bus-Verbindung geflutet. ALPM_LOG_FUNCTION allein zu
+        // vergessen hätte die Flut nur halb abgestellt.
+        if (level & (ALPM_LOG_DEBUG | ALPM_LOG_FUNCTION)) {
+            return;
         }
 
         char buf[2048];
@@ -212,7 +216,37 @@ void setupAlpmCallbacks(alpm_handle_t *handle, QStringList &createdPacnewFiles) 
     }, nullptr);
 }
 
+QStringList pacmanConfValues(const QStringList &args) {
+    QProcess proc;
+    proc.start(QStringLiteral("pacman-conf"), args);
+    if (!proc.waitForFinished(3000) || proc.exitCode() != 0) {
+        return {};
+    }
+    return QString::fromUtf8(proc.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+}
+
 void configureRepositories(alpm_handle_t *handle) {
+    // WICHTIG: alpm_initialize() startet mit Siglevel 0 – das bedeutet "keine
+    // Signaturprüfung". ALPM_SIG_USE_DEFAULT an alpm_register_syncdb() löst nur
+    // auf diesen Standard auf und ist ohne den folgenden Block wirkungslos.
+    // Fail-secure-Ausgangswert entspricht "Required TrustedOnly DatabaseOptional".
+    int defaultSig = lut::parseSigLevel(pacmanConfValues({QStringLiteral("SigLevel")}), 0);
+    if (defaultSig < 0) {
+        defaultSig = lut::kSecureSigLevelFallback;
+        emitEvent(lut::LogLine{lut::LogLevel::Warning, QStringLiteral("alpm-worker"),
+            QStringLiteral("SigLevel aus pacman.conf nicht lesbar – verwende strenge Vorgabe.")});
+    }
+    alpm_option_set_default_siglevel(handle, defaultSig);
+
+    int localSig = lut::parseSigLevel(pacmanConfValues({QStringLiteral("LocalFileSigLevel")}), defaultSig);
+    alpm_option_set_local_file_siglevel(handle, localSig < 0 ? defaultSig : localSig);
+
+    int remoteSig = lut::parseSigLevel(pacmanConfValues({QStringLiteral("RemoteFileSigLevel")}), defaultSig);
+    alpm_option_set_remote_file_siglevel(handle, remoteSig < 0 ? defaultSig : remoteSig);
+
+    emitEvent(lut::LogLine{lut::LogLevel::Info, QStringLiteral("alpm-worker"),
+        QStringLiteral("Signaturprüfung aktiv (SigLevel=%1).").arg(defaultSig)});
+
     QProcess proc;
     proc.start(QStringLiteral("pacman-conf"), {QStringLiteral("--repo-list")});
     if (proc.waitForFinished(3000)) {
@@ -221,7 +255,12 @@ void configureRepositories(alpm_handle_t *handle) {
             QString cleanRepo = repo.trimmed();
             if (cleanRepo.isEmpty()) continue;
 
-            alpm_db_t *db = alpm_register_syncdb(handle, cleanRepo.toUtf8().constData(), ALPM_SIG_USE_DEFAULT);
+            // pacman-conf löst den effektiven SigLevel des Repos bereits auf.
+            // Fällt das aus, bleibt ALPM_SIG_USE_DEFAULT – der oben gesetzte Standard.
+            int repoSig = lut::parseSigLevel(pacmanConfValues(
+                {QStringLiteral("--repo"), cleanRepo, QStringLiteral("SigLevel")}), 0);
+            alpm_db_t *db = alpm_register_syncdb(handle, cleanRepo.toUtf8().constData(),
+                                                 repoSig < 0 ? ALPM_SIG_USE_DEFAULT : repoSig);
             if (db) {
                 QProcess srvProc;
                 srvProc.start(QStringLiteral("pacman-conf"), {QStringLiteral("--repo"), cleanRepo, QStringLiteral("Server")});

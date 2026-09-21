@@ -11,7 +11,7 @@ Restart=on-failure
 ProtectHome=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=/var /etc /tmp /boot
+ReadWritePaths=/usr /var /etc /tmp /boot /opt /srv
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 TimeoutStopSec=30
 

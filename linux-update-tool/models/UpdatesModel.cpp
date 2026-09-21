@@ -51,7 +51,8 @@ QString UpdatesModel::categorizePackage(const PackageOp &op) {
 }
 
 QString UpdatesModel::formatBytes(qint64 bytes) {
-    if (bytes <= 0) return QStringLiteral("0 B");
+    if (bytes < 0) return QStringLiteral("−") + formatBytes(-bytes);
+    if (bytes == 0) return QStringLiteral("0 B");
     const double kb = 1024.0;
     const double mb = kb * 1024.0;
     const double gb = mb * 1024.0;
@@ -83,7 +84,9 @@ QVariant UpdatesModel::data(const QModelIndex &index, int role) const {
         case VersionRole: return op.version;
         case NewVersionRole: return op.newVersion;
         case VersionTransitionRole:
-            return op.newVersion.isEmpty() ? op.version : QStringLiteral("%1 → %2").arg(op.version, op.newVersion);
+            if (op.kind == PackageOp::Kind::Remove) return QStringLiteral("Entfernen: %1").arg(op.version);
+            if (op.version.isEmpty()) return QStringLiteral("Installieren: %1").arg(op.newVersion);
+            return QStringLiteral("%1: %2 → %3").arg(PackageOp::kindToString(op.kind), op.version, op.newVersion);
         case ArchRole: return op.arch;
         case RepoRole: return op.repo.isEmpty() ? QStringLiteral("system") : op.repo;
         case SummaryRole: return op.summary;
@@ -169,7 +172,7 @@ QString UpdatesModel::totalDownloadFormatted() const {
 qint64 UpdatesModel::totalInstalledDeltaBytes() const {
     qint64 total = 0;
     for (const auto &it : m_packages) {
-        if (it.selected) total += it.op.installedSize;
+        if (it.selected) total += it.op.installedSizeDelta.value_or(it.op.installedSize);
     }
     return total;
 }

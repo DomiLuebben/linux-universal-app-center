@@ -101,12 +101,26 @@ void EventsTest::testEventRoundtrips() {
         QCOMPARE(std::get<lut::PhaseChanged>(*res), original);
     }
 
+    // 1b. PhaseChanged mit indeterminate: cancellable=false, indeterminate=true.
+    // Diese Kombination schlägt fehl, wenn das Feld gar nicht serialisiert wird
+    // (beide Seiten blieben sonst auf dem Vorgabewert false) und ebenso, wenn
+    // es mit cancellable vertauscht wird.
+    {
+        lut::PhaseChanged original{lut::Phase::Resolve, QStringLiteral("Transaktion vorbereiten"), false, true};
+        auto res = lut::deserializeEvent(lut::serializeEvent(lut::Event{original}));
+        QVERIFY(res.has_value() && std::holds_alternative<lut::PhaseChanged>(*res));
+        QCOMPARE(std::get<lut::PhaseChanged>(*res), original);
+    }
+
     // 2. PlanReady
     {
         lut::PlanReady original;
         lut::PackageOp op;
         op.id = QStringLiteral("bash-5.2");
         op.name = QStringLiteral("bash");
+        // Negativer Delta deckt eine Entfernung ab und prüft zugleich, dass das
+        // optionale Feld überhaupt über die Leitung geht.
+        op.installedSizeDelta = -4096;
         original.ops.append(op);
         original.downloadBytes = 2048;
         original.installedSizeDelta = 1024;

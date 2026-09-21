@@ -155,6 +155,7 @@ QJsonObject serializePackageOp(const PackageOp &op) {
     obj[QStringLiteral("kind")] = PackageOp::kindToString(op.kind);
     obj[QStringLiteral("downloadSize")] = op.downloadSize;
     obj[QStringLiteral("installedSize")] = op.installedSize;
+    if (op.installedSizeDelta) obj[QStringLiteral("installedSizeDelta")] = *op.installedSizeDelta;
     obj[QStringLiteral("isSecurity")] = op.isSecurity;
     obj[QStringLiteral("isKernel")] = op.isKernel;
     obj[QStringLiteral("userRequested")] = op.userRequested;
@@ -173,6 +174,7 @@ PackageOp deserializePackageOp(const QJsonObject &obj) {
     op.kind = PackageOp::kindFromString(obj.value(QStringLiteral("kind")).toString());
     op.downloadSize = obj.value(QStringLiteral("downloadSize")).toInteger();
     op.installedSize = obj.value(QStringLiteral("installedSize")).toInteger();
+    if (obj.contains(QStringLiteral("installedSizeDelta"))) op.installedSizeDelta = obj.value(QStringLiteral("installedSizeDelta")).toInteger();
     op.isSecurity = obj.value(QStringLiteral("isSecurity")).toBool();
     op.isKernel = obj.contains(QStringLiteral("isKernel"))
                       ? obj.value(QStringLiteral("isKernel")).toBool()
@@ -193,6 +195,7 @@ QJsonObject serializeEvent(const Event &event) {
             data[QStringLiteral("phase")] = phaseToString(arg.phase);
             data[QStringLiteral("label")] = arg.label;
             data[QStringLiteral("cancellable")] = arg.cancellable;
+            data[QStringLiteral("indeterminate")] = arg.indeterminate;
             root[QStringLiteral("data")] = data;
         } else if constexpr (std::is_same_v<T, PlanReady>) {
             root[QStringLiteral("type")] = QStringLiteral("PlanReady");
@@ -297,6 +300,7 @@ std::optional<Event> deserializeEvent(const QJsonObject &obj) {
         e.phase = phaseFromString(data.value(QStringLiteral("phase")).toString());
         e.label = data.value(QStringLiteral("label")).toString();
         e.cancellable = data.value(QStringLiteral("cancellable")).toBool();
+        e.indeterminate = data.value(QStringLiteral("indeterminate")).toBool();
         return e;
     }
     if (type == QLatin1String("PlanReady")) {

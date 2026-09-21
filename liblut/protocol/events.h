@@ -81,6 +81,7 @@ struct PackageOp {
     Kind kind = Kind::Upgrade;
     qint64 downloadSize = 0;   // 0 wenn im Cache
     qint64 installedSize = 0;  // Zielgröße bzw. freizugebende Größe
+    std::optional<qint64> installedSizeDelta;
     bool isSecurity = false;
     bool isKernel = false;     // Heuristik: matcht kernel*, linux*, linux-image*
     bool userRequested = false;
@@ -96,6 +97,7 @@ struct PhaseChanged {
     Phase phase = Phase::Idle;
     QString label;
     bool cancellable = false;
+    bool indeterminate = false;
 
     bool operator==(const PhaseChanged &other) const = default;
 };

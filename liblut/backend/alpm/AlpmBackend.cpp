@@ -162,7 +162,7 @@ void AlpmBackend::commit() {
             }
         });
         connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, [this](int exitCode, QProcess::ExitStatus) {
+                this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
             QByteArray remaining = m_process->readAllStandardOutput();
             if (!remaining.isEmpty()) {
                 QStringList lines = QString::fromUtf8(remaining).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -170,10 +170,23 @@ void AlpmBackend::commit() {
                     parseWorkerOutputLine(line.trimmed());
                 }
             }
-            if (exitCode != 0 && !m_workerDoneEmitted) {
-                emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("Fehlgeschlagen (Exit Code %1)").arg(exitCode), false});
-                emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("Worker beendet mit Code %1").arg(exitCode), false, {}, 0});
+            if (m_workerDoneEmitted) {
+                return; // Worker (oder cancel()) hat das Ergebnis bereits gemeldet
             }
+
+            // Jeder andere Ausgang muss die Transaktion abschliessen, sonst bleibt
+            // die Oberfläche dauerhaft auf der Fortschrittsseite stehen.
+            QString reason;
+            if (exitStatus == QProcess::CrashExit) {
+                reason = QStringLiteral("Worker-Prozess abgestürzt");
+            } else if (exitCode != 0) {
+                reason = QStringLiteral("Worker beendet mit Code %1").arg(exitCode);
+            } else {
+                reason = QStringLiteral("Worker endete ohne Abschlussmeldung");
+            }
+            m_workerDoneEmitted = true;
+            emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
+            emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
         });
 
         m_process->start(workerExe, {QStringLiteral("--sysupgrade")});
@@ -203,6 +216,9 @@ void AlpmBackend::cancel() {
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->terminate();
     }
+    // Vor dem terminate()-Nachlauf setzen: sonst überschreibt der finished-Handler
+    // das "Abgebrochen" gleich wieder mit "Fehlgeschlagen".
+    m_workerDoneEmitted = true;
     emit eventEmitted(PhaseChanged{Phase::Cancelled, QStringLiteral("Abgebrochen"), false});
     emit eventEmitted(TransactionDone{Result::Cancelled, QStringLiteral("Vom Benutzer abgebrochen"), false, {}, 0});
 }

@@ -1,5 +1,6 @@
 #include "HistoryModel.h"
-#include "liblut/backend/alpm/AlpmBackend.h"
+#include "liblut/backend/Backend.h"
+#include <QDebug>
 
 namespace lut {
 
@@ -43,8 +44,10 @@ QHash<int, QByteArray> HistoryModel::roleNames() const {
 }
 
 void HistoryModel::refresh() {
-    AlpmBackend backend;
-    auto entries = backend.history(50);
+    QString error;
+    auto backend = Backend::createForHost(&error);
+    auto entries = backend ? backend->history(50) : QList<HistoryEntry>{};
+    if (!error.isEmpty()) qWarning() << error;
 
     beginResetModel();
     m_items = entries;

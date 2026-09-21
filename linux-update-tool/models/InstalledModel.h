@@ -49,6 +49,7 @@ signals:
     void countChanged();
     void cacheChanged();
     void isSearchingChanged();
+    void cleanupRequested(const QString &command);
     void cleanupStarted(const QString &action);
     void cleanupFinished(const QString &action, bool success);
 

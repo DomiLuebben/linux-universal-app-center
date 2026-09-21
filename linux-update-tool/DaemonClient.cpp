@@ -4,6 +4,8 @@
 #include <QJsonObject>
 #include <QDateTime>
 #include <QDebug>
+#include <QJsonArray>
+#include <QRegularExpression>
 
 namespace lut {
 
@@ -11,6 +13,11 @@ DaemonClient::DaemonClient(QObject *parent)
     : QObject(parent) {
     connect(&m_progressModel, &ProgressModel::logAdded, &m_logModel, &LogModel::appendLog);
     connect(&m_progressModel, &ProgressModel::questionReceived, this, &DaemonClient::questionPrompt);
+    connect(&m_installedModel, &InstalledModel::cleanupRequested, this, [this](const QString &command) {
+        if (command == QLatin1String("clean")) cleanCache();
+        else planDnf5(command, QString());
+    });
+    connect(&m_historyModel, &HistoryModel::undoRequested, this, [this](int id) { planDnf5(QStringLiteral("history undo"), QString::number(id)); });
 }
 
 DaemonClient::~DaemonClient() = default;
@@ -79,12 +86,15 @@ void DaemonClient::queryCapabilities() {
             m_capabilities.autoremove = obj.value(QStringLiteral("autoremove")).toBool();
             m_capabilities.parallelDownloads = obj.value(QStringLiteral("parallelDownloads")).toBool();
             m_capabilities.degraded = obj.value(QStringLiteral("degraded")).toBool();
+            m_dnf5Commands.clear();
+            for (const auto &command : obj.value(QStringLiteral("dnf5Commands")).toArray()) m_dnf5Commands.append(command.toString());
             emit capabilitiesChanged();
         }
     }
 }
 
 void DaemonClient::onDbusTransactionEvent(const QDBusObjectPath &path, const QString &jsonStr) {
+    if (!m_activeTransactionPath.path().isEmpty() && m_activeTransactionPath.path() != path.path()) return;
     m_activeTransactionPath = path;
     QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8());
     if (doc.isObject()) {
@@ -97,7 +107,10 @@ void DaemonClient::onDbusTransactionEvent(const QDBusObjectPath &path, const QSt
 
 void DaemonClient::handleEvent(const Event &event) {
     if (std::holds_alternative<PlanReady>(event)) {
-        m_updatesModel.setPackages(std::get<PlanReady>(event).ops);
+        const auto &plan = std::get<PlanReady>(event);
+        m_updatesModel.setPackages(plan.ops);
+        m_busy = false; m_hasPlan = true;
+        m_statusMessage = plan.warnings.join(QLatin1Char(' '));
         m_lastCheckedString = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm"));
         emit statusChanged();
     } else if (std::holds_alternative<LogLine>(event)) {
@@ -108,6 +121,12 @@ void DaemonClient::handleEvent(const Event &event) {
         m_logModel.appendLog(LogLine{l, QStringLiteral("Phase"), phase.label});
     } else if (std::holds_alternative<TransactionDone>(event)) {
         const auto &done = std::get<TransactionDone>(event);
+        m_busy = false; m_hasPlan = false; m_statusMessage = done.summary;
+        if (done.result == Result::Success) {
+            QTimer::singleShot(0, &m_installedModel, &InstalledModel::refresh);
+            QTimer::singleShot(0, &m_historyModel, &HistoryModel::refresh);
+        }
+        emit statusChanged();
         LogLevel l = (done.result == Result::Success) ? LogLevel::Info : (done.result == Result::Cancelled ? LogLevel::Warning : LogLevel::Error);
         m_logModel.appendLog(LogLine{l, QStringLiteral("Ergebnis"), done.summary});
     } else if (std::holds_alternative<ScriptletStarted>(event)) {
@@ -121,6 +140,9 @@ void DaemonClient::handleEvent(const Event &event) {
 }
 
 void DaemonClient::refreshUpdates() {
+    if (m_busy) return;
+    m_hasPlan = false; m_busy = true; m_isUpgradePlan = true; m_statusMessage = QStringLiteral("Aktualisierungen werden vorbereitet …");
+    m_activeTransactionPath = {}; m_progressModel.reset(); emit statusChanged();
     if (m_replayBackend) {
         m_replayBackend->refreshMetadata();
         return;
@@ -133,48 +155,65 @@ void DaemonClient::refreshUpdates() {
         if (reply.isValid()) {
             m_activeTransactionPath = reply.value();
         } else {
-            qWarning() << "PlanUpgrade call failed:" << reply.error().message();
-            m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("D-Bus"), reply.error().message()});
+            reportError(reply.error().message());
         }
-    }
+    } else reportError(QStringLiteral("Keine Verbindung zum Systemdienst."));
+}
+
+void DaemonClient::reportError(const QString &message) {
+    m_busy = false; m_hasPlan = false; m_statusMessage = message;
+    m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("lutd"), message});
+    emit statusChanged();
+}
+
+void DaemonClient::planDnf5(const QString &command, const QString &arguments, bool securityOnly, bool excludeKernel) {
+    if (m_busy) return;
+    if (m_replayBackend || !m_daemonIface || !m_dnf5Commands.contains(command)) { reportError(QStringLiteral("Diese DNF5-Aktion ist nicht verfügbar.")); return; }
+    const QStringList names = arguments.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    QVariantMap options;
+    options[QStringLiteral("includeSecurityOnly")] = securityOnly;
+    options[QStringLiteral("excludeKernel")] = excludeKernel;
+    m_hasPlan = false; m_busy = true; m_isUpgradePlan = false;
+    m_statusMessage = QStringLiteral("Transaktion wird vorbereitet …");
+    m_activeTransactionPath = {}; m_progressModel.reset(); emit statusChanged();
+    QDBusReply<QDBusObjectPath> reply = m_daemonIface->call(QStringLiteral("PlanDnf5"), command, names, options);
+    if (reply.isValid()) m_activeTransactionPath = reply.value();
+    else reportError(reply.error().message());
+}
+
+void DaemonClient::cleanCache() {
+    if (m_busy) return;
+    if (m_replayBackend || !m_daemonIface) { reportError(QStringLiteral("Keine Verbindung zum Systemdienst.")); return; }
+    m_busy = true; m_hasPlan = false; m_activeTransactionPath = {};
+    m_statusMessage = QStringLiteral("Paketcache wird geleert …"); emit statusChanged();
+    QDBusReply<QDBusObjectPath> reply = m_daemonIface->call(QStringLiteral("CleanCache"));
+    if (reply.isValid()) m_activeTransactionPath = reply.value();
+    else reportError(reply.error().message());
 }
 
 void DaemonClient::startUpgrade() {
-    emit transactionStarted();
-    m_logModel.clear();
-    m_logModel.appendLog(LogLine{LogLevel::Info, QStringLiteral("lutd"), QStringLiteral("Transaktion wird vorbereitet...")});
-
-    if (m_replayBackend) {
-        m_replayBackend->commit();
+    if (m_busy) return;
+    if (m_replayBackend) { emit transactionStarted(); m_replayBackend->commit(); return; }
+    if (!m_hasPlan || !m_daemonIface) { reportError(QStringLiteral("Bitte zunächst einen Plan erstellen und prüfen.")); return; }
+    if (m_updatesModel.selectedCount() != m_updatesModel.totalCount()) {
+        if (!m_isUpgradePlan) { m_statusMessage = QStringLiteral("Dieser aufgelöste Plan wird vollständig ausgeführt. Bitte alle Einträge auswählen oder einen neuen Plan erstellen."); emit statusChanged(); return; }
+        QStringList packages;
+        for (const auto &op : m_updatesModel.selectedPackages())
+            if (op.kind != PackageOp::Kind::Remove) packages.append(m_dnf5Commands.isEmpty() ? op.name : op.name + QLatin1Char('.') + op.arch);
+        packages.removeDuplicates();
+        if (packages.isEmpty()) return;
+        QVariantMap options;
+        options[QStringLiteral("packages")] = packages;
+        options[QStringLiteral("refreshFirst")] = false;
+        m_busy = true; m_hasPlan = false; m_activeTransactionPath = {};
+        m_statusMessage = QStringLiteral("Die Auswahl wird neu aufgelöst. Anschließend den neuen Plan prüfen und bestätigen."); emit statusChanged();
+        QDBusReply<QDBusObjectPath> reply = m_daemonIface->call(QStringLiteral("PlanUpgrade"), options);
+        if (reply.isValid()) m_activeTransactionPath = reply.value(); else reportError(reply.error().message());
         return;
     }
-    if (m_daemonIface && m_daemonIface->isValid()) {
-        if (m_activeTransactionPath.path().isEmpty()) {
-            QVariantMap opts;
-            opts[QStringLiteral("includeSecurityOnly")] = false;
-            opts[QStringLiteral("refreshFirst")] = false;
-            QDBusReply<QDBusObjectPath> planReply = m_daemonIface->call(QStringLiteral("PlanUpgrade"), opts);
-            if (planReply.isValid()) {
-                m_activeTransactionPath = planReply.value();
-            }
-        }
-
-        if (!m_activeTransactionPath.path().isEmpty()) {
-            QDBusReply<void> reply = m_daemonIface->call(QStringLiteral("Commit"), QVariant::fromValue(m_activeTransactionPath));
-            if (!reply.isValid()) {
-                QString err = reply.error().message();
-                qWarning() << "Commit call failed:" << err;
-                m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("D-Bus"), err});
-                m_progressModel.processEvent(PhaseChanged{Phase::Failed, err, false});
-                m_progressModel.processEvent(TransactionDone{Result::Failed, err, false, {}, 0});
-            }
-        } else {
-            QString err = QStringLiteral("Kein gültiger Transaktionspfad vorhanden.");
-            m_logModel.appendLog(LogLine{LogLevel::Error, QStringLiteral("lutd"), err});
-            m_progressModel.processEvent(PhaseChanged{Phase::Failed, err, false});
-            m_progressModel.processEvent(TransactionDone{Result::Failed, err, false, {}, 0});
-        }
-    }
+    QDBusReply<void> reply = m_daemonIface->call(QStringLiteral("Commit"), QVariant::fromValue(m_activeTransactionPath));
+    if (!reply.isValid()) { reportError(reply.error().message()); return; }
+    m_busy = true; m_hasPlan = false; emit statusChanged(); emit transactionStarted();
 }
 
 void DaemonClient::cancelTransaction() {

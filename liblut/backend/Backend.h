@@ -6,6 +6,7 @@
 #include <QList>
 #include <QDateTime>
 #include <QJsonObject>
+#include <memory>
 #include "Capabilities.h"
 #include "liblut/protocol/events.h"
 
@@ -16,6 +17,7 @@ struct UpgradeOptions {
     bool excludeKernel = false;
     bool allowDowngrade = false;
     bool refreshFirst = true;
+    QStringList packages;
 };
 
 struct InstalledPackage {
@@ -71,6 +73,8 @@ public:
     virtual QList<InstalledPackage> installedPackages(const QString &query = QString()) = 0;
     virtual QList<ChangelogEntry> changelog(const QString &pkgId) = 0;
     virtual QList<HistoryEntry> history(int limit = 20) = 0;
+
+    static std::unique_ptr<Backend> createForHost(QString *error = nullptr);
 
 signals:
     void eventEmitted(const lut::Event &event);

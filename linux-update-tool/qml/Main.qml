@@ -77,7 +77,6 @@ ApplicationWindow {
                 Updates {
                     onStartUpgradeRequested: {
                         daemonClient.startUpgrade();
-                        pageStack.push(transactionPage);
                     }
                     onRefreshRequested: {
                         daemonClient.refreshUpdates();

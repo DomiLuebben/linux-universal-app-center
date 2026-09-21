@@ -29,6 +29,11 @@ public:
     QList<HistoryEntry> history(int limit = 20) override;
 
 private:
+    void plan(const QStringList &arguments);
+    void fail(const QString &message);
+    QStringList m_arguments;
+    bool m_ready = false;
+    bool m_running = false;
     void handleStatusFdLine(const QString &line);
 
     QProcess *m_process = nullptr;

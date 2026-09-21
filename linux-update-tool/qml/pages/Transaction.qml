@@ -197,7 +197,7 @@ Item {
                     }
 
                     Text {
-                        text: progressModel.statusMessage.length > 0 ? progressModel.statusMessage : qsTr("Ein Fehler ist aufgetreten. Details siehe Protokoll unten.")
+                        text: progressModel.phaseLabel.length > 0 ? progressModel.phaseLabel : qsTr("Ein Fehler ist aufgetreten. Details siehe Protokoll unten.")
                         font.pixelSize: 13
                         color: Theme.text
                         wrapMode: Text.Wrap
@@ -266,7 +266,7 @@ Item {
         LogPane {
             id: logPane
             width: parent.width
-            logModel: logModel
+            logSource: logModel
         }
     }
 

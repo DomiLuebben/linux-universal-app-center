@@ -20,7 +20,10 @@ add_lut_test(history_test)
 add_lut_test(replay_test)
 add_lut_test(distro_detect_test)
 add_lut_test(statusfd_test)
-add_lut_test(alpm_backend_test)
+if(ALPM_FOUND)
+    add_lut_test(alpm_backend_test)
+endif()
+add_lut_test(siglevel_test)
 
 # Theme & Contrast test (needs Qt6::Gui)
 add_executable(theme_contrast_test
@@ -46,3 +49,6 @@ target_link_libraries(list_perf_test PRIVATE
     Qt6::Test
 )
 add_test(NAME list_perf_test COMMAND list_perf_test)
+
+add_lut_test(dnf5_backend_test)
+add_lut_test(apt_metadata_test)

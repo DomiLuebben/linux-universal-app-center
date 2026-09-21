@@ -4,12 +4,24 @@ import QtQuick.Controls
 Card {
     id: root
     sunken: true
-    property var logModel: null
+    // Bewusst NICHT "logModel": gleicher Name wie die Kontext-Eigenschaft führt bei
+    // "logModel: logModel" zur Selbstzuweisung (Bindung landet auf null).
+    property var logSource: null
     property bool expanded: false
 
     implicitHeight: expanded ? 260 : 0
     visible: expanded
     clip: true
+
+    // Unsichtbarer Helfer: TextEdit.copy() ist der Weg in die Zwischenablage,
+    // ohne dafür ein eigenes C++-Clipboard-Objekt zu exportieren.
+    // Bewusst ausserhalb der Column, damit er keinen Zeilenabstand belegt.
+    TextEdit {
+        id: clipHelper
+        visible: false
+        width: 0
+        height: 0
+    }
 
     Column {
         anchors.fill: parent
@@ -33,19 +45,19 @@ Card {
             PrimaryButton {
                 text: qsTr("Alle")
                 variant: "quiet"
-                onClicked: if (root.logModel) root.logModel.filterMode = 0
+                onClicked: if (root.logSource) root.logSource.filterMode = 0
             }
 
             PrimaryButton {
                 text: qsTr("Warnungen & Fehler")
                 variant: "quiet"
-                onClicked: if (root.logModel) root.logModel.filterMode = 1
+                onClicked: if (root.logSource) root.logSource.filterMode = 1
             }
 
             PrimaryButton {
                 text: qsTr("Nur Fehler")
                 variant: "quiet"
-                onClicked: if (root.logModel) root.logModel.filterMode = 2
+                onClicked: if (root.logSource) root.logSource.filterMode = 2
             }
 
             Item { width: 50; height: 1 }
@@ -54,9 +66,12 @@ Card {
                 text: qsTr("Kopieren")
                 variant: "quiet"
                 onClicked: {
-                    if (root.logModel) {
-                        // In Zwischenablage kopieren
-                        var txt = root.logModel.copyAll()
+                    if (!root.logSource) return;
+                    var txt = root.logSource.copyAll();
+                    if (txt.length > 0) {
+                        clipHelper.text = txt;
+                        clipHelper.selectAll();
+                        clipHelper.copy();
                     }
                 }
             }
@@ -66,7 +81,7 @@ Card {
             id: logList
             width: parent.width
             height: parent.height - 40
-            model: root.logModel
+            model: root.logSource
             clip: true
             spacing: 2
 

@@ -23,7 +23,7 @@ Rectangle {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: root.toggled()
+        onClicked: { if (root.showCheckbox) root.toggled(); }
     }
 
     Row {

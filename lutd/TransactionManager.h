@@ -29,6 +29,8 @@ public slots:
     QDBusObjectPath PlanUpgrade(const QVariantMap &options);
     QDBusObjectPath PlanInstall(const QStringList &names);
     QDBusObjectPath PlanRemove(const QStringList &names);
+    QDBusObjectPath PlanDnf5(const QString &command, const QStringList &arguments, const QVariantMap &options);
+    QDBusObjectPath CleanCache();
     void Commit(const QDBusObjectPath &transactionPath);
     void Cancel(const QDBusObjectPath &transactionPath);
     void AnswerQuestion(const QDBusObjectPath &transactionPath, const QString &id, const QString &json);
@@ -46,6 +48,8 @@ private slots:
 private:
     void resetIdleTimer();
     void registerNewTransaction();
+    bool beginAuthorized(const QString &action);
+    bool ownsTransaction();
 
     PolicyGate m_policyGate;
     Inhibitor m_inhibitor;
@@ -56,6 +60,10 @@ private:
     qint64 m_transactionCounter = 0;
     QDBusObjectPath m_currentTransactionPath;
     bool m_hasActiveTransaction = false;
+    bool m_backendBusy = false;
+    bool m_planReady = false;
+    QString m_owner;
+    QString m_commitAction;
 
     // Ring-Buffer für Reattach (letzte 5000 Events)
     QStringList m_eventHistory;

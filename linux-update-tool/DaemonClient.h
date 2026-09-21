@@ -22,6 +22,10 @@ class DaemonClient : public QObject {
     Q_PROPERTY(bool isReplayMode READ isReplayMode NOTIFY modeChanged)
     Q_PROPERTY(bool partialUpgradeSupported READ partialUpgradeSupported NOTIFY capabilitiesChanged)
     Q_PROPERTY(QString lastCheckedString READ lastCheckedString NOTIFY statusChanged)
+    Q_PROPERTY(bool hasPlan READ hasPlan NOTIFY statusChanged)
+    Q_PROPERTY(bool isBusy READ isBusy NOTIFY statusChanged)
+    Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusChanged)
+    Q_PROPERTY(QStringList dnf5Commands READ dnf5Commands NOTIFY capabilitiesChanged)
 
 public:
     explicit DaemonClient(QObject *parent = nullptr);
@@ -33,6 +37,10 @@ public:
     bool isReplayMode() const { return m_replayBackend != nullptr; }
     bool partialUpgradeSupported() const { return m_capabilities.partialUpgrade; }
     QString lastCheckedString() const { return m_lastCheckedString; }
+    bool hasPlan() const { return m_hasPlan; }
+    bool isBusy() const { return m_busy; }
+    QString statusMessage() const { return m_statusMessage; }
+    QStringList dnf5Commands() const { return m_dnf5Commands; }
 
     ProgressModel *progressModel() { return &m_progressModel; }
     UpdatesModel *updatesModel() { return &m_updatesModel; }
@@ -43,6 +51,8 @@ public:
 public slots:
     void refreshUpdates();
     void startUpgrade();
+    void planDnf5(const QString &command, const QString &arguments, bool securityOnly = false, bool excludeKernel = false);
+    void cleanCache();
     void cancelTransaction();
     void answerQuestion(const QString &id, const QJsonObject &answer);
 
@@ -61,8 +71,14 @@ private slots:
 private:
     void connectToDaemon();
     void queryCapabilities();
+    void reportError(const QString &message);
 
     bool m_connected = false;
+    bool m_hasPlan = false;
+    bool m_busy = false;
+    bool m_isUpgradePlan = false;
+    QString m_statusMessage;
+    QStringList m_dnf5Commands;
     Capabilities m_capabilities;
     QString m_lastCheckedString;
     QDBusObjectPath m_activeTransactionPath;

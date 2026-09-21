@@ -1,18 +1,80 @@
 #include <QApplication>
 #include <QQuickStyle>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QCommandLineParser>
 #include <QIcon>
 #include <QTimer>
 #include <QDebug>
+#include <QFileInfo>
+#include <QLibraryInfo>
 #include "DaemonClient.h"
 #include "theme/SystemPalette.h"
 #include "liblut/liblut.h"
 
+namespace {
+
+// --check-qml sammelt QML-Warnungen (Bindungsschleifen, unbekannte Eigenschaften),
+// damit der Prüfstand nicht nur "geladen" sondern "fehlerfrei" bestätigt.
+bool g_collectQmlWarnings = false;
+QStringList g_qmlWarnings;
+QtMessageHandler g_previousHandler = nullptr;
+
+void qmlWarningCollector(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
+    if (g_collectQmlWarnings && (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg)) {
+        g_qmlWarnings.append(msg);
+    }
+    if (g_previousHandler) {
+        g_previousHandler(type, context, msg);
+    } else {
+        // qInstallMessageHandler liefert nullptr, wenn vorher der Standard-Handler aktiv war.
+        // Ohne diesen Zweig würden alle Meldungen stillschweigend verschwinden.
+        fprintf(stderr, "%s\n", qPrintable(msg));
+        fflush(stderr);
+    }
+}
+
+// Alle Seiten liegen hinter StackView-Components und werden beim Laden von Main.qml
+// NICHT instanziiert. Der Smoketest muss sie deshalb selbst erzeugen.
+const QStringList &checkablePages() {
+    static const QStringList pages = {
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Updates.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Transaction.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Report.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Installed.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/History.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Logs.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Settings.qml"),
+    };
+    return pages;
+}
+
+int instantiateAllPages(QQmlApplicationEngine &engine) {
+    int failures = 0;
+    for (const QString &page : checkablePages()) {
+        QQmlComponent component(&engine, QUrl(page));
+        if (component.isError()) {
+            qCritical().noquote() << "QML-Fehler in" << page << ":" << component.errorString().trimmed();
+            ++failures;
+            continue;
+        }
+        QScopedPointer<QObject> obj(component.create(engine.rootContext()));
+        if (!obj) {
+            qCritical().noquote() << "QML-Instanziierung fehlgeschlagen:" << page
+                                  << component.errorString().trimmed();
+            ++failures;
+        }
+    }
+    return failures;
+}
+
+} // namespace
+
 int main(int argc, char *argv[]) {
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
-        QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+        const QString kdeStyle = QLibraryInfo::path(QLibraryInfo::QmlImportsPath) + QStringLiteral("/org/kde/desktop/qmldir");
+        QQuickStyle::setStyle(QFileInfo::exists(kdeStyle) ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
     }
 
     QApplication app(argc, argv);
@@ -52,6 +114,10 @@ int main(int argc, char *argv[]) {
     parser.process(app);
 
     bool checkQml = parser.isSet(checkQmlOption);
+    if (checkQml) {
+        g_collectQmlWarnings = true;
+        g_previousHandler = qInstallMessageHandler(qmlWarningCollector);
+    }
     QString replayFixture = parser.value(replayOption);
     double replaySpeed = parser.value(speedOption).toDouble();
     if (replaySpeed <= 0.0) replaySpeed = 1.0;
@@ -76,12 +142,26 @@ int main(int argc, char *argv[]) {
         &engine,
         &QQmlApplicationEngine::objectCreated,
         &app,
-        [url, checkQml, &app](QObject *obj, const QUrl &objUrl) {
+        [url, checkQml, &app, &engine](QObject *obj, const QUrl &objUrl) {
             if (!obj && url == objUrl) {
                 QCoreApplication::exit(-1);
             } else if (obj && checkQml) {
-                QTimer::singleShot(50, &app, [&app]() {
-                    app.exit(0);
+                QTimer::singleShot(50, &app, [&app, &engine]() {
+                    int failures = instantiateAllPages(engine);
+                    // Sammeln abschalten und den Standard-Handler wiederherstellen,
+                    // bevor berichtet wird: sonst landen die Meldungen wieder im Sammler.
+                    g_collectQmlWarnings = false;
+                    qInstallMessageHandler(g_previousHandler);
+                    if (!g_qmlWarnings.isEmpty()) {
+                        fprintf(stderr, "%lld QML-Warnung(en) im Smoketest:\n",
+                                static_cast<long long>(g_qmlWarnings.size()));
+                        for (const QString &w : std::as_const(g_qmlWarnings)) {
+                            fprintf(stderr, "  - %s\n", qPrintable(w));
+                        }
+                        fflush(stderr);
+                        failures += static_cast<int>(g_qmlWarnings.size());
+                    }
+                    app.exit(failures == 0 ? 0 : 1);
                 });
             }
         },

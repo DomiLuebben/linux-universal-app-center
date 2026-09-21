@@ -146,7 +146,7 @@ void ProgressModel::processEvent(const Event &event) {
             m_phaseBytesTotal = 0;
             m_itemsFinishedInPhase = 0;
 
-            if (m_phase == Phase::Resolve || m_phase == Phase::Verify || m_phase == Phase::TestTransaction) {
+            if (arg.indeterminate || m_phase == Phase::Resolve || m_phase == Phase::Verify || m_phase == Phase::TestTransaction) {
                 m_isIndeterminate = true;
             } else {
                 m_isIndeterminate = false;
@@ -283,6 +283,9 @@ void ProgressModel::processEvent(const Event &event) {
                 m_phase = Phase::Cancelled;
             }
             m_cancellable = false;
+            m_isIndeterminate = false;
+            m_phaseLabel = arg.summary.isEmpty() ? phaseToString(m_phase) : arg.summary;
+            emit progressChanged(m_totalProgress, m_phaseProgress);
             emit phaseChanged(m_phase, phaseToString(m_phase), m_cancellable);
             emit transactionCompleted(arg);
         }

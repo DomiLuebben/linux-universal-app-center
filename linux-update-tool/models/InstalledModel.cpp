@@ -3,6 +3,8 @@
 #include <QProcess>
 #include <QLocale>
 #include "liblut/backend/alpm/AlpmBackend.h"
+#include "liblut/detect/DistroDetect.h"
+#include <QDebug>
 
 namespace lut {
 
@@ -66,8 +68,10 @@ void InstalledModel::refresh() {
 }
 
 void InstalledModel::executeSearch() {
-    AlpmBackend backend;
-    auto results = backend.installedPackages(m_pendingQuery);
+    QString error;
+    auto backend = Backend::createForHost(&error);
+    auto results = backend ? backend->installedPackages(m_pendingQuery) : QList<InstalledPackage>{};
+    if (!error.isEmpty()) qWarning() << error;
 
     beginResetModel();
     m_items = results;
@@ -79,40 +83,25 @@ void InstalledModel::executeSearch() {
 }
 
 void InstalledModel::updateHygieneStats() {
-    AlpmBackend backend;
-    m_orphanCount = backend.queryOrphans().size();
-    qint64 cacheBytes = backend.queryCleanableCacheBytes();
-    m_cleanableCacheFormatted = formatSize(cacheBytes);
+    m_orphanCount = 0;
+    for (const auto &pkg : m_items) if (pkg.isOrphan) ++m_orphanCount;
+    m_cleanableCacheFormatted = QStringLiteral("unbekannt");
+    if (DistroDetect::detectFamily() == DistroFamily::Arch) {
+        AlpmBackend backend;
+        m_orphanCount = backend.queryOrphans().size();
+        m_cleanableCacheFormatted = formatSize(backend.queryCleanableCacheBytes());
+    }
 
     emit countChanged();
     emit cacheChanged();
 }
 
 void InstalledModel::cleanOrphans() {
-    emit cleanupStarted(QStringLiteral("Waisenpakete bereinigen"));
-    QProcess proc;
-    proc.start(QStringLiteral("pacman"), {QStringLiteral("-Qdtq")});
-    if (proc.waitForFinished(3000)) {
-        QStringList orphans = QString::fromUtf8(proc.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        if (!orphans.isEmpty()) {
-            emit cleanupFinished(QStringLiteral("Waisenpakete gefunden"), true);
-        } else {
-            emit cleanupFinished(QStringLiteral("Keine Waisenpakete vorhanden"), true);
-        }
-    }
-    refresh();
+    emit cleanupRequested(QStringLiteral("autoremove"));
 }
 
 void InstalledModel::cleanCache() {
-    emit cleanupStarted(QStringLiteral("Paketcache bereinigen"));
-    QProcess proc;
-    proc.start(QStringLiteral("paccache"), {QStringLiteral("-rk1")});
-    if (!proc.waitForStarted(1000)) {
-        proc.start(QStringLiteral("pacman"), {QStringLiteral("-Sc"), QStringLiteral("--noconfirm")});
-    }
-    proc.waitForFinished(10000);
-    emit cleanupFinished(QStringLiteral("Paketcache bereinigt"), true);
-    refresh();
+    emit cleanupRequested(QStringLiteral("clean"));
 }
 
 QString InstalledModel::formatSize(qint64 bytes) {

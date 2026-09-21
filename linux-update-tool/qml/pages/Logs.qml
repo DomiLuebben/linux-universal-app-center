@@ -62,7 +62,7 @@ Item {
                 anchors.fill: parent
                 anchors.margins: Theme.s2
                 expanded: true
-                logModel: logModel
+                logSource: logModel
             }
         }
     }
