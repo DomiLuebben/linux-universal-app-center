@@ -2,6 +2,12 @@ set(CMAKE_AUTOMOC ON)
 
 add_library(liblut STATIC
     liblut.cpp
+    protocol/events.cpp
+    progress/Weights.cpp
+    progress/Eta.cpp
+    progress/ProgressModel.cpp
+    backend/Validation.cpp
+    history/HistoryDb.cpp
 )
 
 target_include_directories(liblut PUBLIC
