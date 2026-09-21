@@ -1,0 +1,16 @@
+---
+Checks: '-*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  misc-*,
+  performance-*,
+  readability-*,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-owning-memory,
+  -readability-magic-numbers,
+  -readability-isolate-declaration'
+WarningsAsErrors: ''
+HeaderFilterRegex: 'liblut/.*|lutd/.*|linux-update-tool/.*'

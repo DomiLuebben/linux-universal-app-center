@@ -1,0 +1,22 @@
+set(CMAKE_AUTOMOC ON)
+
+add_library(liblut STATIC
+    liblut.cpp
+)
+
+target_include_directories(liblut PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(liblut PUBLIC
+    Qt6::Core
+    Qt6::DBus
+    SQLite3::SQLite3
+)
+
+if(ALPM_FOUND)
+    target_compile_definitions(liblut PUBLIC HAVE_ALPM=1)
+    target_include_directories(liblut PUBLIC ${ALPM_INCLUDE_DIRS})
+    target_link_libraries(liblut PUBLIC ${ALPM_LIBRARIES})
+endif()
