@@ -1,0 +1,19 @@
+[Unit]
+Description=Linux Update Tool System Daemon
+Documentation=https://github.com/DomiLuebben/linux-update-tool
+After=network.target dbus.service
+
+[Service]
+Type=dbus
+BusName=org.linuxupdatetool.Daemon1
+ExecStart=/usr/libexec/lutd
+Restart=on-failure
+ProtectHome=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var /etc /tmp /boot
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -9,6 +9,9 @@ add_library(liblut STATIC
     backend/Validation.cpp
     backend/Backend.cpp
     backend/replay/ReplayBackend.cpp
+    backend/dnf5/Dnf5Backend.cpp
+    backend/alpm/AlpmBackend.cpp
+    detect/DistroDetect.cpp
     history/HistoryDb.cpp
 )
 

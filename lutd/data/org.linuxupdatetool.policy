@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Linux Update Tool</vendor>
+  <vendor_url>https://github.com/DomiLuebben/linux-update-tool</vendor_url>
+  <icon_name>system-software-update</icon_name>
+
+  <action id="org.linuxupdatetool.refresh">
+    <description>Refresh package metadata</description>
+    <description xml:lang="de">Paketquellen aktualisieren</description>
+    <message>Authentication is required to refresh repository metadata</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Paketquellen zu aktualisieren</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.linuxupdatetool.upgrade">
+    <description>Upgrade system packages</description>
+    <description xml:lang="de">Systempakete aktualisieren</description>
+    <message>Authentication is required to upgrade system packages</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Pakete auf diesem System zu aktualisieren</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.linuxupdatetool.install">
+    <description>Install software packages</description>
+    <description xml:lang="de">Softwarepakete installieren</description>
+    <message>Authentication is required to install packages</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Pakete zu installieren</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.linuxupdatetool.remove">
+    <description>Remove software packages</description>
+    <description xml:lang="de">Softwarepakete entfernen</description>
+    <message>Authentication is required to remove packages</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Pakete zu entfernen</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.linuxupdatetool.manage-others">
+    <description>Manage transactions of other users</description>
+    <description xml:lang="de">Transaktionen anderer Benutzer verwalten</description>
+    <message>Authentication is required to cancel transactions of other users</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Transaktionen anderer Benutzer abzubrechen</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+</policyconfig>
