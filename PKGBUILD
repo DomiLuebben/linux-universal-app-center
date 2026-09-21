@@ -11,6 +11,7 @@ makedepends=('cmake' 'gcc')
 checkdepends=('desktop-file-utils' 'appstream')
 
 build() {
+    rm -rf "${srcdir}/build"
     cmake -B "${srcdir}/build" -S "${startdir}" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr
@@ -19,6 +20,7 @@ build() {
 
 check() {
     ctest --test-dir "${srcdir}/build" --output-on-failure
+    QT_QPA_PLATFORM=offscreen "${srcdir}/build/linux-update-tool/linux-update-tool" --check-qml
     desktop-file-validate "${startdir}/data/org.linuxupdatetool.desktop"
     appstreamcli validate --no-net "${startdir}/data/org.linuxupdatetool.metainfo.xml"
 }

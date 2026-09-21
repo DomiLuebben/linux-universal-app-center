@@ -36,8 +36,15 @@ int main(int argc, char *argv[]) {
     );
     parser.addOption(speedOption);
 
+    QCommandLineOption checkQmlOption(
+        QStringList() << QStringLiteral("check-qml"),
+        QStringLiteral("Test loading QML components and exit immediately (0 on success, -1 on failure).")
+    );
+    parser.addOption(checkQmlOption);
+
     parser.process(app);
 
+    bool checkQml = parser.isSet(checkQmlOption);
     QString replayFixture = parser.value(replayOption);
     double replaySpeed = parser.value(speedOption).toDouble();
     if (replaySpeed <= 0.0) replaySpeed = 1.0;
@@ -62,9 +69,13 @@ int main(int argc, char *argv[]) {
         &engine,
         &QQmlApplicationEngine::objectCreated,
         &app,
-        [url](QObject *obj, const QUrl &objUrl) {
+        [url, checkQml, &app](QObject *obj, const QUrl &objUrl) {
             if (!obj && url == objUrl) {
                 QCoreApplication::exit(-1);
+            } else if (obj && checkQml) {
+                QTimer::singleShot(50, &app, [&app]() {
+                    app.exit(0);
+                });
             }
         },
         Qt::QueuedConnection
