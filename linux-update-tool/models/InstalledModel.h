@@ -2,7 +2,9 @@
 
 #include <QAbstractListModel>
 #include <QTimer>
-#include <QFutureWatcher>
+#include <QThreadPool>
+#include <memory>
+#include <atomic>
 #include "liblut/backend/Backend.h"
 
 namespace lut {
@@ -28,7 +30,7 @@ public:
     };
 
     explicit InstalledModel(QObject *parent = nullptr);
-    ~InstalledModel() override = default;
+    ~InstalledModel() override;
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -38,6 +40,7 @@ public:
     int orphanCount() const { return m_orphanCount; }
     QString cleanableCacheFormatted() const { return m_cleanableCacheFormatted; }
     bool isSearching() const { return m_isSearching; }
+    quint64 queryGeneration() const { return m_queryGeneration; }
 
 public slots:
     void search(const QString &query);
@@ -66,6 +69,9 @@ private:
     int m_orphanCount = 0;
     QString m_cleanableCacheFormatted;
     bool m_isSearching = false;
+    quint64 m_queryGeneration = 0;
+    QThreadPool m_threadPool;
+    std::shared_ptr<std::atomic<bool>> m_alive;
 };
 
 } // namespace lut

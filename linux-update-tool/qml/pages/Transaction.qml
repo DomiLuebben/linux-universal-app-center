@@ -9,9 +9,16 @@ Item {
     signal cancelRequested()
     signal finishAcknowledged()
 
-    Column {
+    ScrollView {
+        id: scroller
         anchors.fill: parent
-        anchors.margins: Theme.s6
+        clip: true
+        contentWidth: availableWidth
+    Column {
+        width: scroller.availableWidth - Theme.s6 * 2
+        x: Theme.s6
+        topPadding: Theme.s6
+        bottomPadding: Theme.s6
         spacing: Theme.s5
 
         // Titelzeile
@@ -47,14 +54,21 @@ Item {
             spacing: Theme.s2
 
             SegmentedProgress {
+                visible: !progressModel.isIndeterminate
                 width: parent.width
                 totalProgress: progressModel.totalProgress
+            }
+
+            ProgressBar {
+                width: parent.width
+                visible: progressModel.isIndeterminate
+                indeterminate: true
             }
 
             Row {
                 width: parent.width
                 Text {
-                    text: Math.round(progressModel.totalProgress * 100) + " %"
+                    text: progressModel.isIndeterminate ? qsTr("In Bearbeitung …") : Math.round(progressModel.totalProgress * 100) + " %"
                     font.pixelSize: 14
                     font.weight: Font.Bold
                     font.features: ({ "tnum": 1 })
@@ -65,7 +79,7 @@ Item {
 
                 Text {
                     anchors.right: parent.right
-                    text: progressModel.etaString
+                    text: progressModel.isIndeterminate ? "" : progressModel.etaString
                     font.pixelSize: 13
                     font.features: ({ "tnum": 1 })
                     color: Theme.textMuted
@@ -268,6 +282,8 @@ Item {
             width: parent.width
             logSource: logModel
         }
+    }
+
     }
 
     property var activeQuestion: ({ id: "", kind: "", payload: ({}) })

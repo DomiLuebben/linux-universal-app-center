@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<components origin="archlinux" version="0.16">
+  <component type="desktop-application">
+    <id>org.kde.kwrite</id>
+    <pkgname>kwrite</pkgname>
+    <name>KWrite</name>
+    <name xml:lang="de">KWrite Texteditor</name>
+    <summary>Text Editor</summary>
+    <summary xml:lang="de">Ein schlanker Texteditor von KDE</summary>
+    <description>
+      <p>KWrite is a text editor by KDE.</p>
+      <p xml:lang="de">KWrite ist ein einfacher Texteditor von KDE.</p>
+    </description>
+    <developer id="org.kde">
+      <name>KDE Community</name>
+    </developer>
+    <project_license>GPL-2.0-or-later</project_license>
+    <url type="homepage">https://apps.kde.org/kwrite/</url>
+    <url type="bugtracker">https://bugs.kde.org/</url>
+    <icon type="stock">accessories-text-editor</icon>
+    <categories>
+      <category>Utility</category>
+      <category>TextEditor</category>
+    </categories>
+    <keywords>
+      <keyword>text</keyword>
+      <keyword>editor</keyword>
+      <keyword xml:lang="de">Schreiben</keyword>
+    </keywords>
+    <launchable type="desktop-id">org.kde.kwrite.desktop</launchable>
+    <screenshots>
+      <screenshot type="default">
+        <caption>Main Window</caption>
+        <image type="source" width="1280" height="720">https://example.org/kwrite.png</image>
+      </screenshot>
+    </screenshots>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.gimp.GIMP</id>
+    <pkgname>gimp</pkgname>
+    <name>GIMP</name>
+    <summary>GNU Image Manipulation Program</summary>
+    <summary xml:lang="de">GNU-Bildbearbeitungsprogramm</summary>
+    <description>
+      <p>GIMP is an advanced image editor.</p>
+      <p xml:lang="de">GIMP ist ein fortschrittlicher Bildeditor.</p>
+    </description>
+    <developer id="org.gimp">
+      <name>The GIMP Team</name>
+    </developer>
+    <project_license>GPL-3.0-or-later</project_license>
+    <url type="homepage">https://www.gimp.org/</url>
+    <icon type="stock">gimp</icon>
+    <categories>
+      <category>Graphics</category>
+      <category>2DGraphics</category>
+    </categories>
+    <launchable type="desktop-id">gimp.desktop</launchable>
+    <screenshots>
+      <screenshot type="default">
+        <image type="source" width="1920" height="1080">https://example.org/gimp.png</image>
+      </screenshot>
+    </screenshots>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.appwithoutpkg</id>
+    <pkgname>nonexistent-package</pkgname>
+    <name>Orphan App</name>
+    <summary>App without repo package</summary>
+    <description><p>This app has no native package candidate.</p></description>
+    <icon type="stock">application-x-executable</icon>
+    <categories><category>Utility</category></categories>
+    <launchable type="desktop-id">orphan.desktop</launchable>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.multipkg</id>
+    <pkgname>multipkg-core</pkgname>
+    <pkgname>multipkg-data</pkgname>
+    <name>Multi Package App</name>
+    <summary>App with multiple required packages</summary>
+    <description><p>Requires both core and data.</p></description>
+    <icon type="stock">package-x-generic</icon>
+    <categories><category>Utility</category></categories>
+    <launchable type="desktop-id">multipkg.desktop</launchable>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.sharedpkg1</id>
+    <pkgname>shared-tool</pkgname>
+    <name>Shared App One</name>
+    <summary>First app from shared package</summary>
+    <icon type="stock">utilities-terminal</icon>
+    <categories><category>Development</category></categories>
+    <launchable type="desktop-id">tool-one.desktop</launchable>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.sharedpkg2</id>
+    <pkgname>shared-tool</pkgname>
+    <name>Shared App Two</name>
+    <summary>Second app from shared package</summary>
+    <icon type="stock">utilities-terminal</icon>
+    <categories><category>Development</category></categories>
+    <launchable type="desktop-id">tool-two.desktop</launchable>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.brokenmedia</id>
+    <pkgname>broken-media-pkg</pkgname>
+    <name>Broken Media App</name>
+    <summary>App with missing icon and screenshots</summary>
+    <categories><category>Utility</category></categories>
+    <launchable type="desktop-id">broken.desktop</launchable>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.enonly</id>
+    <pkgname>enonly-pkg</pkgname>
+    <name>English Only App</name>
+    <summary>English only summary</summary>
+    <description><p>English only description without any German translation.</p></description>
+    <icon type="stock">help-browser</icon>
+    <categories><category>Education</category></categories>
+    <launchable type="desktop-id">enonly.desktop</launchable>
+  </component>
+
+  <component type="desktop-application">
+    <id>org.example.htmlsanitize</id>
+    <pkgname>html-pkg</pkgname>
+    <name>HTML Test App</name>
+    <summary>Tests HTML sanitization</summary>
+    <description><p>Allowed paragraph. <script>alert("hack");</script><b>Bold text</b><a href="http://evil.com">link</a></p></description>
+    <icon type="stock">applications-internet</icon>
+    <categories><category>Network</category></categories>
+  </component>
+</components>

@@ -31,9 +31,26 @@ private:
     }
 
 private slots:
+    void testFailedCheckIsNotAnEmptyPlan();
     void testLogLineIsRecordedOnce();
     void testPhaseChangeIsRecordedOnce();
 };
+
+void DaemonClientLogTest::testFailedCheckIsNotAnEmptyPlan() {
+    DaemonClient client;
+    QVERIFY(!client.hasPlan());
+    QVERIFY(!client.hasError());
+    deliver(client, PlanReady{});
+    QVERIFY(client.hasPlan());
+    QVERIFY(!client.hasError());
+    deliver(client, TransactionDone{Result::Failed, QStringLiteral("Mirror unavailable"), false, {}, 0});
+    QVERIFY(!client.hasPlan());
+    QVERIFY(client.hasError());
+    QCOMPARE(client.statusMessage(), QStringLiteral("Mirror unavailable"));
+    deliver(client, PlanReady{});
+    QVERIFY(client.hasPlan());
+    QVERIFY(!client.hasError());
+}
 
 void DaemonClientLogTest::testLogLineIsRecordedOnce() {
     DaemonClient client;

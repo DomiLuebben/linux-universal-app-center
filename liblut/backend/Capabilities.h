@@ -14,6 +14,15 @@ struct Capabilities {
     bool autoremove = true;
     bool parallelDownloads = true;
     bool degraded = false;
+
+    // Store & Transaktion Version 2
+    bool catalogQuery = false;
+    bool install = false;
+    bool remove = false;
+    bool installRequiresFullUpgrade = false; // Auf Arch/CachyOS true
+    bool typedPackageTargets = true;
+    bool transactionReattach = true;
+    int protocolVersion = 2;
 };
 
 } // namespace lut

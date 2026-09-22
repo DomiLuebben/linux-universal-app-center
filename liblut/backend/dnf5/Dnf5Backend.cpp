@@ -77,6 +77,13 @@ Capabilities Dnf5Backend::capabilities() const {
     cap.securityFlag = true; cap.offlineUpdate = false;
     // The CLI exposes logs but no stable byte-progress protocol.
     cap.degraded = true;
+    cap.catalogQuery = true;
+    cap.install = true;
+    cap.remove = true;
+    cap.installRequiresFullUpgrade = false;
+    cap.typedPackageTargets = true;
+    cap.transactionReattach = true;
+    cap.protocolVersion = 2;
     return cap;
 }
 void Dnf5Backend::fail(const QString &message) {
@@ -289,7 +296,10 @@ QList<InstalledPackage> Dnf5Backend::installedPackages(const QString &filter) {
 QList<ChangelogEntry> Dnf5Backend::changelog(const QString &pkgId) {
     if (!Validation::isValidPackageName(pkgId)) return {};
     const auto text = QString::fromUtf8(query({QStringLiteral("repoquery"), QStringLiteral("--installed"), QStringLiteral("--changelogs"), pkgId})).trimmed();
-    return text.isEmpty() ? QList<ChangelogEntry>{} : QList<ChangelogEntry>{{{}, {}, {}, text}};
+    if (text.isEmpty()) return {};
+    ChangelogEntry entry;
+    entry.text = text;
+    return {entry};
 }
 QList<HistoryEntry> Dnf5Backend::parseHistory(const QByteArray &json, int limit, QString *error) {
     const auto doc = QJsonDocument::fromJson(json);

@@ -183,9 +183,11 @@ PackageOp deserializePackageOp(const QJsonObject &obj) {
     return op;
 }
 
-QJsonObject serializeEvent(const Event &event) {
+QJsonObject serializeEvent(const Event &event, quint64 seq, const QString &transactionPath) {
     QJsonObject root;
     root[QStringLiteral("v")] = 1;
+    if (seq > 0) root[QStringLiteral("seq")] = static_cast<qint64>(seq);
+    if (!transactionPath.isEmpty()) root[QStringLiteral("transactionPath")] = transactionPath;
 
     std::visit([&root](auto &&arg) {
         using T = std::decay_t<decltype(arg)>;
@@ -212,6 +214,7 @@ QJsonObject serializeEvent(const Event &event) {
                 warningsArr.append(w);
             }
             data[QStringLiteral("warnings")] = warningsArr;
+            data[QStringLiteral("planRevision")] = arg.planRevision;
             root[QStringLiteral("data")] = data;
         } else if constexpr (std::is_same_v<T, ItemStarted>) {
             root[QStringLiteral("type")] = QStringLiteral("ItemStarted");
@@ -287,9 +290,16 @@ QJsonObject serializeEvent(const Event &event) {
     return root;
 }
 
-std::optional<Event> deserializeEvent(const QJsonObject &obj) {
+std::optional<Event> deserializeEvent(const QJsonObject &obj, quint64 *outSeq, QString *outTransactionPath) {
     if (obj.value(QStringLiteral("v")).toInt() != 1) {
         return std::nullopt;
+    }
+
+    if (outSeq) {
+        *outSeq = static_cast<quint64>(obj.value(QStringLiteral("seq")).toInteger(0));
+    }
+    if (outTransactionPath) {
+        *outTransactionPath = obj.value(QStringLiteral("transactionPath")).toString();
     }
 
     const QString type = obj.value(QStringLiteral("type")).toString();
@@ -315,6 +325,7 @@ std::optional<Event> deserializeEvent(const QJsonObject &obj) {
         for (const auto &w : warningsArr) {
             e.warnings.append(w.toString());
         }
+        e.planRevision = data.value(QStringLiteral("planRevision")).toString();
         return e;
     }
     if (type == QLatin1String("ItemStarted")) {

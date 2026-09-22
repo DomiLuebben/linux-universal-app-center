@@ -4,11 +4,12 @@
 #include <iostream>
 #include "liblut/backend/replay/ReplayBackend.h"
 #include "liblut/progress/ProgressModel.h"
+#include "liblut/liblut.h"
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("lut-replay"));
-    app.setApplicationVersion(QStringLiteral("1.0.0"));
+    app.setApplicationVersion(lut::versionString());
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Linux Update Tool Replay Runner"));

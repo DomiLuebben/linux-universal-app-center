@@ -8,11 +8,13 @@ Rectangle {
     signal pageSelected(int index)
 
     readonly property var items: [
-        { label: qsTr("Updates"), icon: "system-software-update", badgeKey: "updates" },
-        { label: qsTr("Installiert"), icon: "package-x-generic", badgeKey: "installed" },
-        { label: qsTr("Verlauf"), icon: "view-history", badgeKey: "none" },
-        { label: qsTr("Protokoll"), icon: "utilities-terminal", badgeKey: "logs" },
-        { label: qsTr("Einstellungen"), icon: "preferences-system", badgeKey: "none" }
+        { key: "discover", label: qsTr("Entdecken"), icon: "compass", badgeKey: "none" },
+        { key: "search", label: qsTr("Suchen"), icon: "edit-find", badgeKey: "none" },
+        { key: "installed", label: qsTr("Installiert"), icon: "package-x-generic", badgeKey: "installed" },
+        { key: "updates", label: qsTr("Updates"), icon: "system-software-update", badgeKey: "updates" },
+        { key: "history", label: qsTr("Verlauf"), icon: "view-history", badgeKey: "none" },
+        { key: "logs", label: qsTr("Protokoll"), icon: "utilities-terminal", badgeKey: "logs" },
+        { key: "settings", label: qsTr("Einstellungen"), icon: "preferences-system", badgeKey: "none" }
     ]
 
     width: 220
@@ -48,13 +50,13 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 2
                 Text {
-                    text: qsTr("Update Tool")
-                    font.pixelSize: 15
+                    text: qsTr("Linux Update Tool")
+                    font.pixelSize: 14
                     font.weight: Font.DemiBold
                     color: Theme.text
                 }
                 Text {
-                    text: qsTr("Systempflege")
+                    text: qsTr("Apps & Updates")
                     font.pixelSize: 11
                     color: Theme.textMuted
                 }

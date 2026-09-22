@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import "../components"
 
 Item {
@@ -7,106 +8,102 @@ Item {
     signal startUpgradeRequested()
     signal refreshRequested()
 
-    // Hero-Karte oben
-    Card {
-        id: heroCard
+    readonly property bool checked: daemonClient.hasPlan
+    readonly property bool pending: daemonClient.isBusy
+
+    Column {
+        id: heading
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.margins: Theme.s6
-        height: 210
+        spacing: 6
+        Text { text: qsTr("Aktualisierungen"); color: Theme.text; font.pixelSize: 27; font.weight: Font.DemiBold }
+        Text { text: qsTr("Dein System im Überblick."); color: Theme.textMuted; font.pixelSize: 14 }
+    }
 
-        Row {
+    Card {
+        id: heroCard
+        anchors.top: heading.bottom
+        anchors.topMargin: Theme.s5
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.s6
+        anchors.rightMargin: Theme.s6
+        height: heroContent.implicitHeight + Theme.s5 * 2
+        border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.4)
+
+        ColumnLayout {
+            id: heroContent
             anchors.fill: parent
             anchors.margins: Theme.s5
-            spacing: Theme.s5
-
-            Text {
-                id: countLabel
-                text: updatesModel.totalCount
-                font.pixelSize: 42
-                font.weight: Font.Bold
-                font.features: ({ "tnum": 1 })
-                color: Theme.accent
-                anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.s4
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.s4
+                Rectangle {
+                    width: 56; height: 56; radius: 16
+                    color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.12)
+                    Text {
+                        anchors.centerIn: parent
+                        text: daemonClient.hasError ? "!" : root.pending ? "…" : root.checked ? (updatesModel.totalCount > 0 ? updatesModel.totalCount : "✓") : "↻"
+                        font.pixelSize: 28; font.weight: Font.DemiBold; color: daemonClient.hasError ? Theme.negative : Theme.accent
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 5
+                    Text {
+                        Layout.fillWidth: true
+                        text: daemonClient.hasError ? qsTr("Aktion fehlgeschlagen") : root.pending ? qsTr("Paketlisten werden geprüft") : !root.checked ? qsTr("Aktuellen Stand prüfen") : updatesModel.totalCount > 0 ? qsTr("%1 Paketänderungen bereit").arg(updatesModel.totalCount) : qsTr("Dein System ist aktuell")
+                        font.pixelSize: 20; font.weight: Font.DemiBold; color: Theme.text; wrapMode: Text.Wrap
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.pending ? qsTr("Die Prüfung kann einen Moment dauern.") : root.checked ? qsTr("Zuletzt geprüft um %1 Uhr").arg(daemonClient.lastCheckedString) : qsTr("Erst nach erfolgreicher Prüfung ist der Status bestätigt.")
+                        font.pixelSize: 12; color: Theme.textMuted; wrapMode: Text.Wrap
+                    }
+                }
+                BusyIndicator { running: root.pending; visible: running; implicitWidth: 30; implicitHeight: 30 }
             }
-
-            Column {
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.s2
-                // Breite aus den tatsächlichen Nachbarn ableiten statt aus einer
-                // geratenen Zahl: die vorherigen 390 px passten nicht zur
-                // Knopfbreite, weshalb die Zeile darunter verdeckt wurde.
-                width: Math.max(0, parent.width - countLabel.width
-                                   - actionRow.width - 2 * parent.spacing)
-
-                Text {
-                    width: parent.width
-                    elide: Text.ElideRight
-                    text: qsTr("Geplante Paketänderungen")
-                    font.pixelSize: 18
-                    font.weight: Font.DemiBold
-                    color: Theme.text
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.separator }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.s5
+                ColumnLayout {
+                    spacing: 4
+                    Text { text: qsTr("DOWNLOAD"); font.pixelSize: 10; font.letterSpacing: 1; color: Theme.textMuted }
+                    Text { text: root.checked ? updatesModel.totalDownloadFormatted : "—"; font.pixelSize: 18; color: Theme.text; font.weight: Font.DemiBold }
                 }
-
-                Text {
-                    text: qsTr("%1 noch laden · Speicheränderung %2 · geprüft um %3 Uhr")
-                          .arg(updatesModel.totalDownloadFormatted)
-                          .arg(updatesModel.totalInstalledDeltaFormatted)
-                          .arg(daemonClient.lastCheckedString)
-                    font.pixelSize: 13
-                    font.features: ({ "tnum": 1 })
-                    color: Theme.textMuted
-                    width: parent.width
-                    elide: Text.ElideRight
+                ColumnLayout {
+                    spacing: 4
+                    Text { text: qsTr("SPEICHERÄNDERUNG"); font.pixelSize: 10; font.letterSpacing: 1; color: Theme.textMuted }
+                    Text { text: root.checked ? updatesModel.totalInstalledDeltaFormatted : "—"; font.pixelSize: 18; color: Theme.text; font.weight: Font.DemiBold }
                 }
-            }
-
-            Row {
-                id: actionRow
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.s3
-
-                PrimaryButton {
-                    text: qsTr("Plan ausführen")
-                    variant: "primary"
-                    enabled: daemonClient.hasPlan && !daemonClient.isBusy
-                    onClicked: root.startUpgradeRequested()
-                }
-
+                Item { Layout.fillWidth: true }
                 PrimaryButton {
                     text: qsTr("Prüfen")
                     variant: "quiet"
-                    enabled: !daemonClient.isBusy && !aurUpdates.busy
+                    enabled: !root.pending && !aurUpdates.busy
                     onClicked: {
                         root.refreshRequested();
-                        // Ein Knopf für beide Listen auf dieser Seite.
                         if (aurUpdates.available) aurUpdates.check();
                     }
                 }
+                PrimaryButton {
+                    text: qsTr("Aktualisieren")
+                    variant: "primary"
+                    enabled: root.checked && !root.pending && updatesModel.totalCount > 0
+                    onClicked: root.startUpgradeRequested()
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: daemonClient.statusMessage
+                color: daemonClient.hasError ? Theme.negative : Theme.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
             }
         }
-    }
-
-    Text {
-        anchors.left: heroCard.left
-        anchors.right: heroCard.right
-        anchors.bottom: heroCard.bottom
-        anchors.margins: Theme.s4
-        text: daemonClient.statusMessage
-        color: Theme.textMuted
-        font.pixelSize: 12
-        wrapMode: Text.Wrap
-    }
-
-    Button {
-        visible: daemonClient.dnf5Commands.length > 0
-        enabled: !daemonClient.isBusy
-        anchors.top: heroCard.top
-        anchors.right: heroCard.right
-        anchors.margins: Theme.s3
-        text: qsTr("Paketaktion …")
-        onClicked: actionDialog.open()
     }
 
     Dialog {
@@ -135,58 +132,16 @@ Item {
         }
     }
 
-    // Leerer Zustand
-    EmptyState {
-        visible: updatesModel.totalCount === 0 && !daemonClient.isBusy
-        anchors.top: heroCard.bottom
-        anchors.topMargin: Theme.s7
-        title: daemonClient.hasPlan ? qsTr("Keine Paketänderungen") : qsTr("Noch kein bestätigter Plan")
-        message: daemonClient.hasPlan ? qsTr("Der letzte Plan enthält keine Paketänderungen.") : qsTr("Mit Prüfen einen aktuellen Plan erstellen.")
-    }
-
-    // Rolling Release Hinweis (Arch / CachyOS)
-    Card {
-        id: rollingNoticeCard
-        visible: !daemonClient.partialUpgradeSupported && updatesModel.totalCount > 0
-        anchors.top: heroCard.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: Theme.s6
-        anchors.topMargin: Theme.s2
-        height: 52
-
-        Row {
-            anchors.fill: parent
-            anchors.margins: Theme.s3
-            spacing: Theme.s4
-
-            Text {
-                text: "ℹ"
-                font.pixelSize: 18
-                font.weight: Font.Bold
-                color: Theme.accent
-                anchors.verticalCenter: parent.verticalCenter
-            }
-
-            Text {
-                text: qsTr("Arch Linux / CachyOS (Rolling Release): Alle Pakete werden zusammen aktualisiert, um Systemkonsistenz zu gewährleisten.")
-                font.pixelSize: 13
-                color: Theme.textMuted
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-    }
-
     // Gemeinsamer Listenbereich: Systemaktualisierungen, darunter durch einen
     // Trennstrich abgesetzt die AUR-Pakete. Bewusst eine Seite statt zwei.
     ScrollView {
         id: listenBereich
-        anchors.top: rollingNoticeCard.visible ? rollingNoticeCard.bottom : heroCard.bottom
+        anchors.top: heroCard.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: Theme.s6
-        anchors.topMargin: Theme.s2
+        anchors.topMargin: Theme.s5
         clip: true
         contentWidth: availableWidth
 
@@ -194,12 +149,29 @@ Item {
             width: listenBereich.availableWidth
             spacing: Theme.s3
 
+            RowLayout {
+                width: parent.width
+                Text { text: qsTr("Systempakete"); font.pixelSize: 15; font.weight: Font.DemiBold; color: Theme.text; Layout.fillWidth: true }
+                Text { text: updatesModel.totalCount > 0 ? qsTr("%1 Pakete").arg(updatesModel.totalCount) : ""; font.pixelSize: 12; color: Theme.textMuted }
+                PrimaryButton {
+                    visible: daemonClient.dnf5Commands.length > 0
+                    enabled: !root.pending
+                    text: qsTr("Paketaktion …"); variant: "quiet"
+                    onClicked: actionDialog.open()
+                }
+            }
             Text {
-                text: qsTr("Systemaktualisierungen")
-                visible: updatesModel.totalCount > 0
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-                color: Theme.textMuted
+                width: parent.width
+                visible: !daemonClient.partialUpgradeSupported && updatesModel.totalCount > 0
+                text: qsTr("Rolling Release · Alle Systempakete werden gemeinsam aktualisiert.")
+                font.pixelSize: 12; color: Theme.textMuted; wrapMode: Text.Wrap
+            }
+            Text {
+                width: parent.width
+                visible: updatesModel.totalCount === 0
+                text: root.pending ? qsTr("Aktuelle Pakete werden ermittelt …") : root.checked ? qsTr("Für die eingerichteten Paketquellen sind keine Änderungen nötig.") : qsTr("Noch kein bestätigtes Prüfergebnis. Starte eine neue Prüfung.")
+                color: Theme.textMuted; font.pixelSize: 13; wrapMode: Text.Wrap
+                topPadding: Theme.s3; bottomPadding: Theme.s5
             }
 
             ListView {

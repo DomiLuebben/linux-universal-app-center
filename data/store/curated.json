@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "collections": [
+    {
+      "id": "creative",
+      "title": "Kreativ arbeiten",
+      "description": "Werkzeuge für Bildbearbeitung, Vektorgrafik, 3D und Videoschnitt",
+      "appIds": [
+        "org.gimp.GIMP",
+        "org.inkscape.Inkscape",
+        "org.blender.org",
+        "org.kde.kdenlive",
+        "org.kde.krita",
+        "org.audacityteam.Audacity",
+        "org.shotcut.Shotcut",
+        "org.darktable.Darktable"
+      ]
+    },
+    {
+      "id": "everyday",
+      "title": "Für den Alltag",
+      "description": "Wichtige Anwendungen für Internet, Medien und Dokumente",
+      "appIds": [
+        "org.mozilla.firefox",
+        "org.videolan.VLC",
+        "org.kde.okular",
+        "org.libreoffice.LibreOffice",
+        "org.keepassxc.KeePassXC",
+        "org.kde.kate",
+        "org.gnome.Calculator"
+      ]
+    },
+    {
+      "id": "development",
+      "title": "Entwickeln",
+      "description": "Entwicklungsumgebungen, Editoren und Programmierwerkzeuge",
+      "appIds": [
+        "com.visualstudio.code",
+        "org.kde.kdevelop",
+        "org.wireshark.Wireshark",
+        "org.kde.kate",
+        "git-cola"
+      ]
+    },
+    {
+      "id": "kde",
+      "title": "Für KDE",
+      "description": "Nahtlos integrierte Anwendungen der KDE Gear Suite",
+      "appIds": [
+        "org.kde.dolphin",
+        "org.kde.kate",
+        "org.kde.kwrite",
+        "org.kde.gwenview",
+        "org.kde.spectacle",
+        "org.kde.konsole",
+        "org.kde.okular",
+        "org.kde.ark"
+      ]
+    }
+  ]
+}

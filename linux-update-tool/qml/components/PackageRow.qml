@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 
 Rectangle {
     id: root
@@ -15,9 +16,9 @@ Rectangle {
     signal toggled()
 
     implicitWidth: 600
-    implicitHeight: 56
+    implicitHeight: 68
     radius: Theme.radiusControl
-    color: mouseArea.containsMouse ? Theme.surfaceAlt : "transparent"
+    color: mouseArea.containsMouse ? Theme.surfaceAlt : Theme.surface
 
     MouseArea {
         id: mouseArea
@@ -26,83 +27,53 @@ Rectangle {
         onClicked: { if (root.showCheckbox) root.toggled(); }
     }
 
-    Row {
+    RowLayout {
         anchors.fill: parent
         anchors.leftMargin: Theme.s4
         anchors.rightMargin: Theme.s4
         spacing: Theme.s3
-
         CheckBox {
-            id: chk
             visible: root.showCheckbox
-            anchors.verticalCenter: parent.verticalCenter
             checked: root.selected
             onToggled: root.toggled()
+            Accessible.name: qsTr("%1 auswählen").arg(root.pkgName)
         }
-
-        Column {
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 2
-            width: root.width - (chk.visible ? chk.width : 0) - sizeText.implicitWidth - chipRow.implicitWidth - Theme.s6
-
+        Rectangle {
+            visible: !root.showCheckbox
+            width: 30; height: 30; radius: 8
+            color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.1)
+            Text { anchors.centerIn: parent; text: "↑"; color: Theme.accent; font.pixelSize: 18 }
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.minimumWidth: 100
+            spacing: 4
             Text {
-                text: root.pkgName
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-                color: Theme.text
-                elide: Text.ElideRight
-                width: parent.width
+                Layout.fillWidth: true
+                text: root.pkgName; font.pixelSize: 14; font.weight: Font.DemiBold
+                color: Theme.text; elide: Text.ElideRight
             }
-
             Text {
-                text: root.versionTransition
-                font.pixelSize: 12
-                font.family: "JetBrains Mono, Hack, Noto Sans Mono, monospace"
+                Layout.fillWidth: true
+                text: root.versionTransition; font.pixelSize: 12
                 font.features: ({ "tnum": 1 })
-                color: Theme.textMuted
-                elide: Text.ElideRight
-                width: parent.width
+                color: Theme.textMuted; elide: Text.ElideRight
             }
         }
-
-        Row {
-            id: chipRow
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.s2
-
-            Chip {
-                visible: root.isSecurity
-                text: qsTr("Sicherheit")
-                variant: "security"
-            }
-            Chip {
-                visible: root.isKernel
-                text: qsTr("Kernel")
-                variant: "kernel"
-            }
-            Chip {
-                text: root.repo
-                variant: "neutral"
-            }
-        }
-
+        Chip { visible: root.isSecurity; text: qsTr("Sicherheit"); variant: "security" }
+        Chip { visible: root.isKernel; text: qsTr("Kernel"); variant: "kernel" }
         Text {
-            id: sizeText
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.downloadSizeFormatted
-            font.pixelSize: 12
-            font.family: "JetBrains Mono, Hack, Noto Sans Mono, monospace"
+            visible: root.width > 580 && root.repo.length > 0
+            text: root.repo
+            Layout.maximumWidth: 130
+            elide: Text.ElideRight; font.pixelSize: 12; color: Theme.textMuted
+        }
+        Text {
+            Layout.preferredWidth: 86
+            text: root.downloadSizeFormatted; font.pixelSize: 12
             font.features: ({ "tnum": 1 })
-            color: Theme.textMuted
-            horizontalAlignment: Text.AlignRight
+            color: Theme.text; horizontalAlignment: Text.AlignRight
         }
     }
 
-    Rectangle {
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 1
-        color: Theme.separator
-    }
 }

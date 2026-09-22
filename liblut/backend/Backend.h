@@ -9,6 +9,7 @@
 #include <memory>
 #include "Capabilities.h"
 #include "liblut/protocol/events.h"
+#include "liblut/transaction/TransactionTypes.h"
 
 namespace lut {
 
@@ -64,9 +65,13 @@ public:
     virtual void planUpgradeAll(const UpgradeOptions &options = {}) = 0;
     virtual void planInstall(const QStringList &names) = 0; // [Phase 2]
     virtual void planRemove(const QStringList &names) = 0;
+    virtual void planPackageTransaction(const TransactionIntent &intent);
     virtual void commit() = 0;
+    virtual void commitPlan(const QString &planRevision) { Q_UNUSED(planRevision); commit(); }
+    virtual void discardPlan() { cancel(); }
     virtual void cancel() = 0;
     virtual void answerQuestion(const QString &id, const QJsonObject &answer) = 0;
+    virtual TransactionSnapshot currentSnapshot() const { return {}; }
 
     // Lesende Abfragen ohne root
     virtual QList<PackageOp> availableUpdates() = 0;

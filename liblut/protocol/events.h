@@ -107,6 +107,7 @@ struct PlanReady {
     qint64 downloadBytes = 0;
     qint64 installedSizeDelta = 0;
     QStringList warnings;
+    QString planRevision;
 
     bool operator==(const PlanReady &other) const = default;
 };
@@ -202,7 +203,7 @@ using Event = std::variant<
 QJsonObject serializePackageOp(const PackageOp &op);
 PackageOp deserializePackageOp(const QJsonObject &obj);
 
-QJsonObject serializeEvent(const Event &event);
-std::optional<Event> deserializeEvent(const QJsonObject &obj);
+QJsonObject serializeEvent(const Event &event, quint64 seq = 0, const QString &transactionPath = QString());
+std::optional<Event> deserializeEvent(const QJsonObject &obj, quint64 *outSeq = nullptr, QString *outTransactionPath = nullptr);
 
 } // namespace lut

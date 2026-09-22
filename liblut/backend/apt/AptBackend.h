@@ -23,10 +23,17 @@ public:
     void cancel() override;
     void answerQuestion(const QString &id, const QJsonObject &answer) override;
 
+    void planPackageTransaction(const TransactionIntent &intent) override;
+    void commitPlan(const QString &expectedPlanRevision) override;
+    void discardPlan() override;
+    TransactionSnapshot currentSnapshot() const override;
+
     QList<PackageOp> availableUpdates() override;
     QList<InstalledPackage> installedPackages(const QString &query = QString()) override;
     QList<ChangelogEntry> changelog(const QString &pkgId) override;
     QList<HistoryEntry> history(int limit = 20) override;
+
+    static bool isProtectedPackage(const QString &name);
 
 private:
     void plan(const QStringList &arguments);
@@ -38,6 +45,8 @@ private:
 
     QProcess *m_process = nullptr;
     QList<PackageOp> m_plannedOps;
+    TransactionPlan m_currentPlan;
+    TransactionIntent m_currentIntent;
 };
 
 } // namespace lut

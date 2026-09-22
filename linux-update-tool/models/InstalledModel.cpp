@@ -9,13 +9,22 @@
 namespace lut {
 
 InstalledModel::InstalledModel(QObject *parent)
-    : QAbstractListModel(parent) {
+    : QAbstractListModel(parent)
+    , m_alive(std::make_shared<std::atomic<bool>>(true)) {
+    m_threadPool.setMaxThreadCount(1);
     m_debounceTimer.setSingleShot(true);
     m_debounceTimer.setInterval(150); // 150 ms Debounce gemäß Spezifikation
     connect(&m_debounceTimer, &QTimer::timeout, this, &InstalledModel::executeSearch);
 
     // Initiales Laden
     refresh();
+}
+
+InstalledModel::~InstalledModel() {
+    m_alive->store(false);
+    m_debounceTimer.stop();
+    m_threadPool.clear();
+    m_threadPool.waitForDone();
 }
 
 int InstalledModel::rowCount(const QModelIndex &parent) const {
@@ -63,37 +72,67 @@ void InstalledModel::search(const QString &query) {
 }
 
 void InstalledModel::refresh() {
+    m_debounceTimer.stop();
+    m_isSearching = true;
+    emit isSearchingChanged();
     executeSearch();
-    updateHygieneStats();
 }
 
 void InstalledModel::executeSearch() {
-    QString error;
-    auto backend = Backend::createForHost(&error);
-    auto results = backend ? backend->installedPackages(m_pendingQuery) : QList<InstalledPackage>{};
-    if (!error.isEmpty()) qWarning() << error;
+    quint64 currentGen = ++m_queryGeneration;
+    const QString query = m_pendingQuery;
+    auto alive = m_alive;
 
-    beginResetModel();
-    m_items = results;
-    endResetModel();
+    m_threadPool.start([this, alive, currentGen, query]() {
+        if (!alive->load()) return;
 
-    m_isSearching = false;
-    emit isSearchingChanged();
-    emit countChanged();
+        QString error;
+        auto backend = Backend::createForHost(&error);
+        auto results = (backend && alive->load()) ? backend->installedPackages(query) : QList<InstalledPackage>{};
+
+        int orphanCount = 0;
+        for (const auto &pkg : results) {
+            if (pkg.isOrphan) ++orphanCount;
+        }
+        qint64 cleanableBytes = -1;
+        if (alive->load() && DistroDetect::detectFamily() == DistroFamily::Arch) {
+            AlpmBackend alpmBackend;
+            orphanCount = alpmBackend.queryOrphans().size();
+            cleanableBytes = alpmBackend.queryCleanableCacheBytes();
+        }
+
+        if (!alive->load()) return;
+
+        QMetaObject::invokeMethod(this, [this, alive, currentGen, results, orphanCount, cleanableBytes, error]() {
+            if (!alive->load() || currentGen != m_queryGeneration) {
+                return; // Veraltete Antwort oder Modell zerstört (Abschnitt 10.1)
+            }
+
+            if (!error.isEmpty()) {
+                qWarning() << error;
+            }
+
+            beginResetModel();
+            m_items = results;
+            endResetModel();
+
+            m_orphanCount = orphanCount;
+            if (cleanableBytes >= 0) {
+                m_cleanableCacheFormatted = formatSize(cleanableBytes);
+            } else {
+                m_cleanableCacheFormatted = QStringLiteral("unbekannt");
+            }
+
+            m_isSearching = false;
+            emit isSearchingChanged();
+            emit countChanged();
+            emit cacheChanged();
+        });
+    });
 }
 
 void InstalledModel::updateHygieneStats() {
-    m_orphanCount = 0;
-    for (const auto &pkg : m_items) if (pkg.isOrphan) ++m_orphanCount;
-    m_cleanableCacheFormatted = QStringLiteral("unbekannt");
-    if (DistroDetect::detectFamily() == DistroFamily::Arch) {
-        AlpmBackend backend;
-        m_orphanCount = backend.queryOrphans().size();
-        m_cleanableCacheFormatted = formatSize(backend.queryCleanableCacheBytes());
-    }
-
-    emit countChanged();
-    emit cacheChanged();
+    // Hygiene-Statistiken werden bereits asynchron in executeSearch() ermittelt
 }
 
 void InstalledModel::cleanOrphans() {

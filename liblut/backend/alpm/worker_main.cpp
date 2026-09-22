@@ -12,6 +12,7 @@
 #include <QProcess>
 #include <QDateTime>
 #include <QRegularExpression>
+#include <QSet>
 
 #ifdef HAVE_ALPM
 #include <alpm.h>
@@ -19,6 +20,8 @@
 
 #include "liblut/protocol/events.h"
 #include "liblut/backend/alpm/SigLevelParser.h"
+#include "liblut/transaction/TransactionTypes.h"
+#include "liblut/liblut.h"
 
 namespace {
 
@@ -216,9 +219,11 @@ void setupAlpmCallbacks(alpm_handle_t *handle, QStringList &createdPacnewFiles) 
     }, nullptr);
 }
 
+QString pacmanConfig;
+
 QStringList pacmanConfValues(const QStringList &args) {
     QProcess proc;
-    proc.start(QStringLiteral("pacman-conf"), args);
+    proc.start(QStringLiteral("pacman-conf"), QStringList{QStringLiteral("--config"), pacmanConfig} + args);
     if (!proc.waitForFinished(3000) || proc.exitCode() != 0) {
         return {};
     }
@@ -247,6 +252,17 @@ void configureRepositories(alpm_handle_t *handle) {
     emitEvent(lut::LogLine{lut::LogLevel::Info, QStringLiteral("alpm-worker"),
         QStringLiteral("Signaturprüfung aktiv (SigLevel=%1).").arg(defaultSig)});
 
+    for (const QString &arch : pacmanConfValues({QStringLiteral("Architecture")}))
+        alpm_option_add_architecture(handle, arch.toUtf8().constData());
+    for (const QString &pkg : pacmanConfValues({QStringLiteral("IgnorePkg")}))
+        alpm_option_add_ignorepkg(handle, pkg.toUtf8().constData());
+    for (const QString &group : pacmanConfValues({QStringLiteral("IgnoreGroup")}))
+        alpm_option_add_ignoregroup(handle, group.toUtf8().constData());
+    for (const QString &pattern : pacmanConfValues({QStringLiteral("NoExtract")}))
+        alpm_option_add_noextract(handle, pattern.toUtf8().constData());
+    for (const QString &pattern : pacmanConfValues({QStringLiteral("NoUpgrade")}))
+        alpm_option_add_noupgrade(handle, pattern.toUtf8().constData());
+
     // Pfade VOR dem Registrieren der Datenbanken setzen. libalpm initialisiert
     // GPGME beim ersten signaturrelevanten Zugriff und merkt sich das Ergebnis;
     // ein bis dahin ungesetztes gpgdir führt zu "Public keyring not found".
@@ -272,10 +288,8 @@ void configureRepositories(alpm_handle_t *handle) {
         for (const QString &dir : hookDirs) alpm_option_add_hookdir(handle, dir.trimmed().toUtf8().constData());
     }
 
-    QProcess proc;
-    proc.start(QStringLiteral("pacman-conf"), {QStringLiteral("--repo-list")});
-    if (proc.waitForFinished(3000)) {
-        QStringList repos = QString::fromUtf8(proc.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    {
+        const QStringList repos = pacmanConfValues({QStringLiteral("--repo-list")});
         for (const QString &repo : repos) {
             QString cleanRepo = repo.trimmed();
             if (cleanRepo.isEmpty()) continue;
@@ -287,10 +301,8 @@ void configureRepositories(alpm_handle_t *handle) {
             alpm_db_t *db = alpm_register_syncdb(handle, cleanRepo.toUtf8().constData(),
                                                  repoSig < 0 ? ALPM_SIG_USE_DEFAULT : repoSig);
             if (db) {
-                QProcess srvProc;
-                srvProc.start(QStringLiteral("pacman-conf"), {QStringLiteral("--repo"), cleanRepo, QStringLiteral("Server")});
-                if (srvProc.waitForFinished(2000)) {
-                    QStringList servers = QString::fromUtf8(srvProc.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+                {
+                    const QStringList servers = pacmanConfValues({QStringLiteral("--repo"), cleanRepo, QStringLiteral("Server")});
                     for (const QString &server : servers) {
                         QString cleanServer = server.trimmed();
                         if (!cleanServer.isEmpty()) {
@@ -324,12 +336,46 @@ void runTestMode() {
     emitEvent(lut::PhaseChanged{lut::Phase::Finished, QStringLiteral("Fertig"), false});
 }
 
+bool isProtectedPackage(const QString &name, const QStringList &holdPkgs) {
+    if (holdPkgs.contains(name)) {
+        return true;
+    }
+    static const QSet<QString> criticalPackages = {
+        QStringLiteral("pacman"),
+        QStringLiteral("pacman-contrib"),
+        QStringLiteral("glibc"),
+        QStringLiteral("systemd"),
+        QStringLiteral("systemd-libs"),
+        QStringLiteral("filesystem"),
+        QStringLiteral("bash"),
+        QStringLiteral("coreutils"),
+        QStringLiteral("shadow"),
+        QStringLiteral("util-linux"),
+        QStringLiteral("linux"),
+        QStringLiteral("linux-cachyos"),
+        QStringLiteral("linux-lts"),
+        QStringLiteral("linux-zen"),
+        QStringLiteral("linux-hardened")
+    };
+    if (criticalPackages.contains(name)) {
+        return true;
+    }
+    struct utsname uts;
+    if (uname(&uts) == 0) {
+        QString runningKernel = QString::fromUtf8(uts.release);
+        if (!runningKernel.isEmpty() && name == runningKernel) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("lut-alpm-worker"));
-    app.setApplicationVersion(QStringLiteral("1.0.0"));
+    app.setApplicationVersion(lut::versionString());
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Linux Update Tool - ALPM Transaction Worker"));
@@ -341,7 +387,23 @@ int main(int argc, char *argv[]) {
     QCommandLineOption dryRunOption(QStringLiteral("dry-run"), QStringLiteral("Simuliert die Transaktion ohne Änderungen am Dateisystem"));
     QCommandLineOption dbPathOption(QStringLiteral("dbpath"), QStringLiteral("Pfad zur Pacman-Datenbank"), QStringLiteral("path"), QStringLiteral("/var/lib/pacman"));
     QCommandLineOption rootOption(QStringLiteral("root"), QStringLiteral("Root-Verzeichnis"), QStringLiteral("path"), QStringLiteral("/"));
+    QCommandLineOption configOption(QStringLiteral("config"), QStringLiteral("Pacman-Konfiguration"), QStringLiteral("path"), QStringLiteral("/etc/pacman.conf"));
+    QCommandLineOption planOption(QStringLiteral("plan"), QStringLiteral("Paketplan ausgeben, keine Installation"));
+    QCommandLineOption refreshOption(QStringLiteral("refresh"), QStringLiteral("Auch im Dry-Run die ausgewählte Datenbank synchronisieren"));
+    QCommandLineOption actionOption(QStringLiteral("action"), QStringLiteral("Aktionsart: upgrade, install, remove"), QStringLiteral("action"));
+    QCommandLineOption installOption(QStringLiteral("install"), QStringLiteral("Zu installierende Pakete (kommagetrennt)"), QStringLiteral("packages"));
+    QCommandLineOption removeOption(QStringLiteral("remove"), QStringLiteral("Zu entfernende Pakete (kommagetrennt)"), QStringLiteral("packages"));
+    QCommandLineOption commitOption(QStringLiteral("commit"), QStringLiteral("Führt die geplante Transaktion tatsächlich aus"));
+    QCommandLineOption expectedFingerprintOption(QStringLiteral("expected-fingerprint"), QStringLiteral("Erwarteter SHA-256 Fingerprint des Plans"), QStringLiteral("sha256"));
 
+    parser.addOption(configOption);
+    parser.addOption(planOption);
+    parser.addOption(refreshOption);
+    parser.addOption(actionOption);
+    parser.addOption(installOption);
+    parser.addOption(removeOption);
+    parser.addOption(commitOption);
+    parser.addOption(expectedFingerprintOption);
     parser.addOption(sysupgradeOption);
     parser.addOption(testModeOption);
     parser.addOption(dryRunOption);
@@ -352,6 +414,46 @@ int main(int argc, char *argv[]) {
     if (parser.isSet(testModeOption)) {
         runTestMode();
         return 0;
+    }
+
+    enum class WorkerAction {
+        Upgrade,
+        Install,
+        Remove
+    };
+
+    WorkerAction action = WorkerAction::Upgrade;
+    QString actionStr = parser.value(actionOption).toLower().trimmed();
+    if (actionStr == QLatin1String("install") || parser.isSet(installOption)) {
+        action = WorkerAction::Install;
+    } else if (actionStr == QLatin1String("remove") || parser.isSet(removeOption)) {
+        action = WorkerAction::Remove;
+    } else if (actionStr == QLatin1String("upgrade") || parser.isSet(sysupgradeOption) || actionStr.isEmpty()) {
+        action = WorkerAction::Upgrade;
+    } else {
+        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+            QStringLiteral("Unbekannte Aktion '%1'. Erlaubt sind: upgrade, install, remove.").arg(actionStr)});
+        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Ungültige Aktionsart."), false, {}, 0});
+        return 1;
+    }
+
+    QStringList targetPackages;
+    if (action == WorkerAction::Install && parser.isSet(installOption)) {
+        targetPackages = parser.value(installOption).split(QRegularExpression(QStringLiteral("[,\\s]+")), Qt::SkipEmptyParts);
+    } else if (action == WorkerAction::Remove && parser.isSet(removeOption)) {
+        targetPackages = parser.value(removeOption).split(QRegularExpression(QStringLiteral("[,\\s]+")), Qt::SkipEmptyParts);
+    }
+    for (const QString &posArg : parser.positionalArguments()) {
+        if (!posArg.trimmed().isEmpty()) {
+            targetPackages.append(posArg.trimmed());
+        }
+    }
+
+    if ((action == WorkerAction::Install || action == WorkerAction::Remove) && targetPackages.isEmpty()) {
+        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+            QStringLiteral("Keine Zielpakete angegeben.")});
+        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Keine Zielpakete angegeben."), false, {}, 0});
+        return 1;
     }
 
     QString dbPath = parser.value(dbPathOption);
@@ -372,8 +474,12 @@ int main(int argc, char *argv[]) {
     emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("libalpm nicht verfügbar"), false, {}, 0});
     return 1;
 #else
-    bool isDryRun = parser.isSet(dryRunOption);
-    if (geteuid() != 0 && !isDryRun) {
+    pacmanConfig = parser.value(configOption);
+    bool isCommit = parser.isSet(commitOption) || parser.isSet(sysupgradeOption);
+    bool isPlan = parser.isSet(planOption) || (!isCommit && !parser.isSet(dryRunOption));
+    bool isDryRun = parser.isSet(dryRunOption) || isPlan;
+
+    if (geteuid() != 0 && !isDryRun && rootPath == QStringLiteral("/")) {
         emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("Root-Rechte erforderlich für ALPM-Transaktionen.")});
         emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Root-Rechte erforderlich"), false, {}, 0});
         return 1;
@@ -392,8 +498,33 @@ int main(int argc, char *argv[]) {
     QStringList createdPacnewFiles;
     setupAlpmCallbacks(handle, createdPacnewFiles);
     configureRepositories(handle);
+    if (!alpm_get_syncdbs(handle) && action != WorkerAction::Remove) {
+        alpm_release(handle);
+        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Keine Paketquellen konfiguriert oder pacman.conf nicht lesbar."), false, {}, 0});
+        return 1;
+    }
 
-    emitEvent(lut::PhaseChanged{lut::Phase::Resolve, QStringLiteral("Bereite Systemaktualisierung vor"), true});
+    // checkupdates synchronisiert eine private Datenbank. Vor der echten
+    // Transaktion muss auch die vom Worker verwendete Datenbank aktuell sein.
+    if ((!isDryRun && action != WorkerAction::Remove) || parser.isSet(refreshOption)) {
+        emitEvent(lut::PhaseChanged{lut::Phase::RefreshMetadata, QStringLiteral("Synchronisiere Paketdatenbanken"), true, true});
+        if (!alpm_get_syncdbs(handle) || alpm_db_update(handle, alpm_get_syncdbs(handle), 0) < 0) {
+            const QString reason = QStringLiteral("Paketdatenbanken konnten nicht aktualisiert werden: %1")
+                .arg(QString::fromUtf8(alpm_strerror(alpm_errno(handle))));
+            alpm_release(handle);
+            emitEvent(lut::PhaseChanged{lut::Phase::Failed, reason, false});
+            emitEvent(lut::TransactionDone{lut::Result::Failed, reason, false, {}, 0});
+            return 1;
+        }
+    }
+
+    if (action == WorkerAction::Install) {
+        emitEvent(lut::PhaseChanged{lut::Phase::Resolve, QStringLiteral("Bereite Installation vor"), true});
+    } else if (action == WorkerAction::Remove) {
+        emitEvent(lut::PhaseChanged{lut::Phase::Resolve, QStringLiteral("Bereite Entfernung vor"), true});
+    } else {
+        emitEvent(lut::PhaseChanged{lut::Phase::Resolve, QStringLiteral("Bereite Systemaktualisierung vor"), true});
+    }
 
     int transFlags = isDryRun ? ALPM_TRANS_FLAG_NOLOCK : 0;
     if (alpm_trans_init(handle, transFlags) != 0) {
@@ -403,15 +534,89 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (alpm_sync_sysupgrade(handle, 0) != 0) {
-        alpm_errno_t err = alpm_errno(handle);
-        QString errStr = QString::fromUtf8(alpm_strerror(err));
-        emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_sync_sysupgrade fehlgeschlagen: %1").arg(errStr)});
-        alpm_trans_release(handle);
-        alpm_release(handle);
-        emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Abhängigkeitsprüfung fehlgeschlagen: %1").arg(errStr), false});
-        emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Abhängigkeitsauflösung fehlgeschlagen: %1").arg(errStr), false, {}, 0});
-        return 1;
+    if (action == WorkerAction::Install) {
+        for (const QString &target : targetPackages) {
+            alpm_pkg_t *foundPkg = nullptr;
+            for (alpm_list_t *i = alpm_get_syncdbs(handle); i; i = alpm_list_next(i)) {
+                auto *db = static_cast<alpm_db_t *>(i->data);
+                alpm_pkg_t *p = alpm_db_get_pkg(db, target.toUtf8().constData());
+                if (p) {
+                    foundPkg = p;
+                    break;
+                }
+            }
+            if (!foundPkg) {
+                foundPkg = alpm_find_dbs_satisfier(handle, alpm_get_syncdbs(handle), target.toUtf8().constData());
+            }
+            if (!foundPkg) {
+                emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+                    QStringLiteral("Paket '%1' in den konfigurierten Paketquellen nicht gefunden.").arg(target)});
+                alpm_trans_release(handle);
+                alpm_release(handle);
+                emitEvent(lut::TransactionDone{lut::Result::Failed,
+                    QStringLiteral("Paket '%1' nicht gefunden.").arg(target), false, {}, 0});
+                return 1;
+            }
+            if (alpm_add_pkg(handle, foundPkg) != 0) {
+                alpm_errno_t err = alpm_errno(handle);
+                QString errStr = QString::fromUtf8(alpm_strerror(err));
+                emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+                    QStringLiteral("alpm_add_pkg fehlgeschlagen für '%1': %2").arg(target, errStr)});
+                alpm_trans_release(handle);
+                alpm_release(handle);
+                emitEvent(lut::TransactionDone{lut::Result::Failed,
+                    QStringLiteral("Hinzufügen von Paket '%1' fehlgeschlagen: %2").arg(target, errStr), false, {}, 0});
+                return 1;
+            }
+        }
+        // Section 8.3 & ALPM-01: No partial upgrades on Arch/CachyOS
+        if (alpm_sync_sysupgrade(handle, 0) != 0) {
+            alpm_errno_t err = alpm_errno(handle);
+            QString errStr = QString::fromUtf8(alpm_strerror(err));
+            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_sync_sysupgrade fehlgeschlagen: %1").arg(errStr)});
+            alpm_trans_release(handle);
+            alpm_release(handle);
+            emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Abhängigkeitsprüfung fehlgeschlagen: %1").arg(errStr), false});
+            emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Abhängigkeitsauflösung fehlgeschlagen: %1").arg(errStr), false, {}, 0});
+            return 1;
+        }
+    } else if (action == WorkerAction::Remove) {
+        for (const QString &target : targetPackages) {
+            alpm_pkg_t *pkg = alpm_db_get_pkg(alpm_get_localdb(handle), target.toUtf8().constData());
+            if (!pkg) {
+                emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+                    QStringLiteral("Paket '%1' ist nicht installiert.").arg(target)});
+                alpm_trans_release(handle);
+                alpm_release(handle);
+                emitEvent(lut::TransactionDone{lut::Result::Failed,
+                    QStringLiteral("Paket '%1' ist nicht installiert.").arg(target), false, {}, 0});
+                return 1;
+            }
+            if (alpm_remove_pkg(handle, pkg) != 0) {
+                alpm_errno_t err = alpm_errno(handle);
+                QString errStr = QString::fromUtf8(alpm_strerror(err));
+                emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+                    QStringLiteral("alpm_remove_pkg fehlgeschlagen für '%1': %2").arg(target, errStr)});
+                alpm_trans_release(handle);
+                alpm_release(handle);
+                emitEvent(lut::TransactionDone{lut::Result::Failed,
+                    QStringLiteral("Entfernen von Paket '%1' fehlgeschlagen: %2").arg(target, errStr), false, {}, 0});
+                return 1;
+            }
+        }
+        // Strictly NO alpm_sync_sysupgrade on Remove! (ALPM-02)
+    } else {
+        // Upgrade
+        if (alpm_sync_sysupgrade(handle, 0) != 0) {
+            alpm_errno_t err = alpm_errno(handle);
+            QString errStr = QString::fromUtf8(alpm_strerror(err));
+            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"), QStringLiteral("alpm_sync_sysupgrade fehlgeschlagen: %1").arg(errStr)});
+            alpm_trans_release(handle);
+            alpm_release(handle);
+            emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Abhängigkeitsprüfung fehlgeschlagen: %1").arg(errStr), false});
+            emitEvent(lut::TransactionDone{lut::Result::Failed, QStringLiteral("Abhängigkeitsauflösung fehlgeschlagen: %1").arg(errStr), false, {}, 0});
+            return 1;
+        }
     }
 
     alpm_list_t *data = nullptr;
@@ -447,6 +652,76 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Check protected packages on remove (Section 8.7, TX-04, ALPM-05)
+    QStringList holdPkgs = pacmanConfValues({QStringLiteral("HoldPkg")});
+    for (alpm_list_t *i = alpm_trans_get_remove(handle); i; i = alpm_list_next(i)) {
+        auto *pkg = static_cast<alpm_pkg_t *>(i->data);
+        QString pkgName = QString::fromUtf8(alpm_pkg_get_name(pkg));
+        if (isProtectedPackage(pkgName, holdPkgs)) {
+            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+                QStringLiteral("Geschütztes Systempaket '%1' darf nicht entfernt werden (Schutz kritischer Systempakete nach Richtlinie TX-04).").arg(pkgName)});
+            alpm_trans_release(handle);
+            alpm_release(handle);
+            emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Geschütztes Systempaket betroffen"), false});
+            emitEvent(lut::TransactionDone{lut::Result::Failed,
+                QStringLiteral("Transaktion abgebrochen: Das geschützte Systempaket '%1' darf nicht entfernt werden.").arg(pkgName), false, {}, 0});
+            return 1;
+        }
+    }
+
+    lut::PlanReady plan;
+    for (alpm_list_t *i = alpm_trans_get_add(handle); i; i = alpm_list_next(i)) {
+        auto *pkg = static_cast<alpm_pkg_t *>(i->data);
+        auto *old = alpm_db_get_pkg(alpm_get_localdb(handle), alpm_pkg_get_name(pkg));
+        lut::PackageOp op;
+        op.name = QString::fromUtf8(alpm_pkg_get_name(pkg));
+        op.newVersion = QString::fromUtf8(alpm_pkg_get_version(pkg));
+        op.version = old ? QString::fromUtf8(alpm_pkg_get_version(old)) : QString();
+        op.id = op.name + QLatin1Char('-') + op.newVersion;
+        op.arch = QString::fromUtf8(alpm_pkg_get_arch(pkg));
+        auto *db = alpm_pkg_get_db(pkg);
+        op.repo = db ? QString::fromUtf8(alpm_db_get_name(db)) : QString();
+        op.summary = QString::fromUtf8(alpm_pkg_get_desc(pkg));
+        op.kind = old ? lut::PackageOp::Kind::Upgrade : lut::PackageOp::Kind::Install;
+        op.downloadSize = alpm_pkg_download_size(pkg);
+        op.installedSize = alpm_pkg_get_isize(pkg);
+        op.installedSizeDelta = op.installedSize - (old ? alpm_pkg_get_isize(old) : 0);
+        op.isKernel = lut::PackageOp::detectIsKernel(op.name);
+        plan.downloadBytes += op.downloadSize;
+        plan.installedSizeDelta += *op.installedSizeDelta;
+        plan.ops.append(op);
+    }
+    for (alpm_list_t *i = alpm_trans_get_remove(handle); i; i = alpm_list_next(i)) {
+        auto *pkg = static_cast<alpm_pkg_t *>(i->data);
+        lut::PackageOp op;
+        op.name = QString::fromUtf8(alpm_pkg_get_name(pkg));
+        op.version = QString::fromUtf8(alpm_pkg_get_version(pkg));
+        op.id = op.name + QLatin1Char('-') + op.version;
+        op.arch = QString::fromUtf8(alpm_pkg_get_arch(pkg));
+        auto *db = alpm_pkg_get_db(pkg);
+        op.repo = db ? QString::fromUtf8(alpm_db_get_name(db)) : QStringLiteral("local");
+        op.summary = QString::fromUtf8(alpm_pkg_get_desc(pkg));
+        op.kind = lut::PackageOp::Kind::Remove;
+        op.installedSize = alpm_pkg_get_isize(pkg);
+        op.installedSizeDelta = -op.installedSize;
+        plan.installedSizeDelta -= op.installedSize;
+        plan.ops.append(op);
+    }
+
+    lut::TransactionPlan txPlan;
+    txPlan.ops = plan.ops;
+    txPlan.downloadBytes = plan.downloadBytes;
+    txPlan.installedSizeDelta = plan.installedSizeDelta;
+    QString fingerprint = txPlan.calculateFingerprint();
+    plan.planRevision = fingerprint;
+
+    if (isPlan) {
+        alpm_trans_release(handle);
+        alpm_release(handle);
+        emitEvent(plan);
+        return 0;
+    }
+
     // Leere Transaktion ist ein Erfolg, kein Fehler. libalpm setzt den Zustand
     // PREPARED nur, wenn es tatsächlich Ziele gibt: alpm_trans_prepare() liefert
     // dann zwar 0, alpm_trans_commit() scheitert aber mit
@@ -461,6 +736,21 @@ int main(int argc, char *argv[]) {
             QStringLiteral("Keine Aktualisierungen verfügbar – das System ist aktuell."), false, {}, 0});
         emitEvent(lut::PhaseChanged{lut::Phase::Finished, QStringLiteral("Fertig"), false});
         return 0;
+    }
+
+    // Fingerprint-Prüfung unter exklusiver Datenbanksperre (TX-09, TX-10)
+    if (parser.isSet(expectedFingerprintOption)) {
+        QString expected = parser.value(expectedFingerprintOption).trimmed();
+        if (!expected.isEmpty() && expected != fingerprint) {
+            emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
+                QStringLiteral("Planabweichung erkannt (TX-09): Erwarteter Fingerprint '%1', tatsächlicher Fingerprint '%2'. Transaktion abgebrochen.").arg(expected, fingerprint)});
+            alpm_trans_release(handle);
+            alpm_release(handle);
+            emitEvent(lut::PhaseChanged{lut::Phase::Failed, QStringLiteral("Planabweichung erkannt vor Transaktionsausführung"), false});
+            emitEvent(lut::TransactionDone{lut::Result::Failed,
+                QStringLiteral("Planabweichung erkannt: Der Paketplan hat sich vor der Ausführung geändert."), false, {}, 0});
+            return 1;
+        }
     }
 
     if (!isDryRun) {
@@ -506,8 +796,8 @@ int main(int argc, char *argv[]) {
 
     emitEvent(lut::TransactionDone{
         lut::Result::Success,
-        QStringLiteral("System erfolgreich aktualisiert"),
-        rebootNeeded,
+        isDryRun ? QStringLiteral("Prüfung erfolgreich – keine Pakete verändert") : QStringLiteral("System erfolgreich aktualisiert"),
+        !isDryRun && rebootNeeded,
         restartServices,
         0
     });

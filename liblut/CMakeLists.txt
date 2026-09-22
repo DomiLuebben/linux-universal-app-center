@@ -15,6 +15,11 @@ add_library(liblut STATIC
     backend/apt/AptBackend.cpp
     detect/DistroDetect.cpp
     history/HistoryDb.cpp
+    transaction/TransactionTypes.cpp
+    catalog/PackageCatalog.cpp
+    catalog/alpm/AlpmPackageCatalog.cpp
+    catalog/dnf5/Dnf5PackageCatalog.cpp
+    catalog/apt/AptPackageCatalog.cpp
 )
 
 target_include_directories(liblut PUBLIC

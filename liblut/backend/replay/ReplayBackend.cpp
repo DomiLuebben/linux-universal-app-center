@@ -168,6 +168,12 @@ Capabilities ReplayBackend::capabilities() const {
     cap.changelogs = true;
     cap.securityFlag = true;
     cap.autoremove = true;
+    cap.catalogQuery = true;
+    cap.install = true;
+    cap.remove = true;
+    cap.typedPackageTargets = true;
+    cap.transactionReattach = true;
+    cap.protocolVersion = 2;
     return cap;
 }
 

@@ -8,6 +8,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
+#include <QTemporaryDir>
+#include <QProcessEnvironment>
 #include <sys/utsname.h>
 
 #ifdef HAVE_ALPM
@@ -36,88 +38,183 @@ Capabilities AlpmBackend::capabilities() const {
     cap.offlineUpdate = false;
     cap.autoremove = true;
     cap.parallelDownloads = true;
+    cap.catalogQuery = true;
+    cap.install = true;
+    cap.remove = true;
+    cap.installRequiresFullUpgrade = true;
+    cap.typedPackageTargets = true;
+    cap.transactionReattach = true;
+    cap.protocolVersion = 2;
     return cap;
 }
 
 void AlpmBackend::refreshMetadata() {
-    emit eventEmitted(PhaseChanged{Phase::RefreshMetadata, QStringLiteral("Synchronisiere Paketdatenbanken"), true});
-
-    // Checkupdates-Prinzip: Temporäre Datenbank synchronisieren ohne Root
-    QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/alpm-db");
-    QDir().mkpath(cacheDir);
-
-    QProcess proc;
-    proc.start(QStringLiteral("checkupdates"), {QStringLiteral("-d")});
-    if (!proc.waitForStarted(2000)) {
-        // Fallback pacman -Sy mit temp dbpath falls checkupdates nicht installiert
-        proc.start(QStringLiteral("pacman"), {QStringLiteral("-Sy"), QStringLiteral("--dbpath"), cacheDir});
-    }
-    proc.waitForFinished(60000);
-
-    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Bereit"), false});
+    planUpgradeAll({});
 }
 
 void AlpmBackend::planUpgradeAll(const UpgradeOptions &) {
-    emit eventEmitted(PhaseChanged{Phase::Resolve, QStringLiteral("Prüfe Systemaktualisierungen"), true});
+    m_plannedAction = PlannedAction::Upgrade;
+    m_plannedTargets.clear();
+    m_expectedRevision.clear();
+    m_planRevision.clear();
+    m_plannedOps.clear();
 
+    auto fail = [this](const QString &reason) {
+        emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
+        emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
+    };
+    emit eventEmitted(PhaseChanged{Phase::RefreshMetadata, QStringLiteral("Prüfe aktuelle Paketlisten"), false, true});
+    QTemporaryDir database(QDir::tempPath() + QStringLiteral("/lut-checkupdates-XXXXXX"));
+    if (!database.isValid()) { fail(QStringLiteral("Temporäre Paketdatenbank konnte nicht erstellt werden.")); return; }
     QProcess proc;
-    // checkupdates oder pacman -Qu
+    auto env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+    env.insert(QStringLiteral("CHECKUPDATES_DB"), database.path());
+    proc.setProcessEnvironment(env);
     proc.start(QStringLiteral("checkupdates"), {QStringLiteral("--nocolor")});
-    if (!proc.waitForStarted(2000)) {
-        proc.start(QStringLiteral("pacman"), {QStringLiteral("-Qu")});
+    if (!proc.waitForStarted(5000)) {
+        fail(QStringLiteral("checkupdates konnte nicht gestartet werden. Bitte pacman-contrib installieren.")); return;
     }
-    proc.waitForFinished(30000);
-
-    QList<PackageOp> ops;
-    qint64 totalDownload = 0;
-    qint64 totalInstalled = 0;
-
-    // Format von pacman -Qu / checkupdates:
-    // name alt -> neu [repo]
-    // z.B.: linux-cachyos 6.13.4-arch1 -> 6.13.5-arch1 [cachyos]
-    QRegularExpression re(QStringLiteral(R"(^([a-zA-Z0-9._+-]+)\s+([^\s]+)\s+->\s+([^\s]+)(?:\s+\[([a-zA-Z0-9._+-]+)\])?)"));
-
-    while (proc.canReadLine()) {
-        QString line = QString::fromUtf8(proc.readLine()).trimmed();
-        auto match = re.match(line);
-        if (match.hasMatch()) {
-            PackageOp op;
-            op.name = match.captured(1);
-            op.version = match.captured(2);
-            op.newVersion = match.captured(3);
-            if (match.lastCapturedIndex() >= 4) {
-                op.repo = match.captured(4);
-            }
-            op.id = QStringLiteral("%1-%2").arg(op.name, op.newVersion);
-            op.kind = PackageOp::Kind::Upgrade;
-            op.isKernel = PackageOp::detectIsKernel(op.name);
-
-            // Typische Schätzgrößen falls keine Metadaten vorhanden
-            op.downloadSize = op.isKernel ? (75 * 1024 * 1024) : (5 * 1024 * 1024);
-            op.installedSize = op.isKernel ? (150 * 1024 * 1024) : (15 * 1024 * 1024);
-
-            totalDownload += op.downloadSize;
-            totalInstalled += op.installedSize;
-            ops.append(op);
-        }
+    if (!proc.waitForFinished(180000)) {
+        proc.kill(); proc.waitForFinished();
+        fail(QStringLiteral("Zeitüberschreitung beim Laden der Paketlisten.")); return;
     }
-
-    m_plannedOps = ops;
-
-    PlanReady plan;
-    plan.ops = ops;
-    plan.downloadBytes = totalDownload;
-    plan.installedSizeDelta = totalInstalled;
-    if (!capabilities().partialUpgrade) {
-        plan.warnings.append(QStringLiteral("Arch Linux / CachyOS: Es werden immer alle Pakete gemeinsam aktualisiert (Rolling Release)."));
+    // checkupdates: 0 = Updates, 2 = keine Updates, 1 = Fehler.
+    // Niemals auf die möglicherweise veraltete Systemdatenbank zurückfallen.
+    if (proc.exitStatus() != QProcess::NormalExit || (proc.exitCode() != 0 && proc.exitCode() != 2)) {
+        fail(QStringLiteral("Updateprüfung fehlgeschlagen: %1").arg(QString::fromUtf8(proc.readAllStandardError()).trimmed())); return;
     }
-
-    emit eventEmitted(plan);
-    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Aktualisierungsplan bereit"), true});
+    const QString worker = findWorkerExecutable();
+    if (worker.isEmpty()) { fail(QStringLiteral("ALPM-Worker fehlt. Bitte Linux Update Tool neu installieren.")); return; }
+    proc.start(worker, {QStringLiteral("--plan"), QStringLiteral("--dbpath"), database.path()});
+    if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
+        proc.kill(); proc.waitForFinished(); fail(QStringLiteral("Paketplan konnte nicht erstellt werden.")); return;
+    }
+    std::optional<PlanReady> plan;
+    QString failure;
+    for (const QByteArray &line : proc.readAllStandardOutput().split('\n')) {
+        auto event = deserializeEvent(QJsonDocument::fromJson(line).object());
+        if (!event) continue;
+        if (auto *ready = std::get_if<PlanReady>(&*event)) plan = *ready;
+        else if (auto *done = std::get_if<TransactionDone>(&*event)) failure = done->summary;
+        else emit eventEmitted(*event);
+    }
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || !plan) {
+        fail(failure.isEmpty() ? QStringLiteral("ALPM lieferte keinen gültigen Paketplan.") : failure); return;
+    }
+    m_plannedOps = plan->ops;
+    m_planRevision = plan->planRevision;
+    emit eventEmitted(*plan);
+    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Aktualisierungsplan bereit"), false});
 }
 
-void AlpmBackend::planInstall(const QStringList &) {}
-void AlpmBackend::planRemove(const QStringList &) {}
+void AlpmBackend::planInstall(const QStringList &names) {
+    m_plannedAction = PlannedAction::Install;
+    m_plannedTargets = names;
+    m_expectedRevision.clear();
+    m_planRevision.clear();
+    m_plannedOps.clear();
+
+    auto fail = [this](const QString &reason) {
+        emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
+        emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
+    };
+
+    if (names.isEmpty()) {
+        fail(QStringLiteral("Keine Pakete zur Installation angegeben."));
+        return;
+    }
+
+    emit eventEmitted(PhaseChanged{Phase::RefreshMetadata, QStringLiteral("Bereite Installation vor"), false, true});
+    const QString worker = findWorkerExecutable();
+    if (worker.isEmpty()) {
+        fail(QStringLiteral("ALPM-Worker fehlt. Bitte Linux Update Tool neu installieren."));
+        return;
+    }
+
+    QProcess proc;
+    QStringList args = {QStringLiteral("--plan"), QStringLiteral("--action"), QStringLiteral("install"), QStringLiteral("--install"), names.join(QLatin1Char(','))};
+    proc.start(worker, args);
+    if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
+        proc.kill(); proc.waitForFinished();
+        fail(QStringLiteral("Paketplan konnte nicht erstellt werden."));
+        return;
+    }
+
+    std::optional<PlanReady> plan;
+    QString failure;
+    for (const QByteArray &line : proc.readAllStandardOutput().split('\n')) {
+        auto event = deserializeEvent(QJsonDocument::fromJson(line).object());
+        if (!event) continue;
+        if (auto *ready = std::get_if<PlanReady>(&*event)) plan = *ready;
+        else if (auto *done = std::get_if<TransactionDone>(&*event)) failure = done->summary;
+        else emit eventEmitted(*event);
+    }
+
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || !plan) {
+        fail(failure.isEmpty() ? QStringLiteral("ALPM lieferte keinen gültigen Paketplan.") : failure);
+        return;
+    }
+
+    m_plannedOps = plan->ops;
+    m_planRevision = plan->planRevision;
+    emit eventEmitted(*plan);
+    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Installationsplan bereit"), false});
+}
+
+void AlpmBackend::planRemove(const QStringList &names) {
+    m_plannedAction = PlannedAction::Remove;
+    m_plannedTargets = names;
+    m_expectedRevision.clear();
+    m_planRevision.clear();
+    m_plannedOps.clear();
+
+    auto fail = [this](const QString &reason) {
+        emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
+        emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
+    };
+
+    if (names.isEmpty()) {
+        fail(QStringLiteral("Keine Pakete zur Entfernung angegeben."));
+        return;
+    }
+
+    emit eventEmitted(PhaseChanged{Phase::Resolve, QStringLiteral("Bereite Entfernung vor"), false, true});
+    const QString worker = findWorkerExecutable();
+    if (worker.isEmpty()) {
+        fail(QStringLiteral("ALPM-Worker fehlt. Bitte Linux Update Tool neu installieren."));
+        return;
+    }
+
+    QProcess proc;
+    QStringList args = {QStringLiteral("--plan"), QStringLiteral("--action"), QStringLiteral("remove"), QStringLiteral("--remove"), names.join(QLatin1Char(','))};
+    proc.start(worker, args);
+    if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
+        proc.kill(); proc.waitForFinished();
+        fail(QStringLiteral("Paketplan konnte nicht erstellt werden."));
+        return;
+    }
+
+    std::optional<PlanReady> plan;
+    QString failure;
+    for (const QByteArray &line : proc.readAllStandardOutput().split('\n')) {
+        auto event = deserializeEvent(QJsonDocument::fromJson(line).object());
+        if (!event) continue;
+        if (auto *ready = std::get_if<PlanReady>(&*event)) plan = *ready;
+        else if (auto *done = std::get_if<TransactionDone>(&*event)) failure = done->summary;
+        else emit eventEmitted(*event);
+    }
+
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || !plan) {
+        fail(failure.isEmpty() ? QStringLiteral("ALPM lieferte keinen gültigen Paketplan.") : failure);
+        return;
+    }
+
+    m_plannedOps = plan->ops;
+    m_planRevision = plan->planRevision;
+    emit eventEmitted(*plan);
+    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Entfernungsplan bereit"), false});
+}
 
 QString AlpmBackend::findWorkerExecutable() const {
     QString appDir = QCoreApplication::applicationDirPath();
@@ -154,6 +251,13 @@ void AlpmBackend::commit() {
 
     m_workerDoneEmitted = false;
     m_process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_workerDoneEmitted) return;
+        m_workerDoneEmitted = true;
+        const QString reason = QStringLiteral("Paketprozess konnte nicht gestartet werden: %1").arg(m_process->errorString());
+        emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
+        emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
+    });
 
     if (useWorker) {
         connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
@@ -189,7 +293,28 @@ void AlpmBackend::commit() {
             emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
         });
 
-        m_process->start(workerExe, {QStringLiteral("--sysupgrade")});
+        QStringList args;
+        args << QStringLiteral("--commit");
+        if (m_plannedAction == PlannedAction::Install) {
+            args << QStringLiteral("--action") << QStringLiteral("install");
+            if (!m_plannedTargets.isEmpty()) {
+                args << QStringLiteral("--install") << m_plannedTargets.join(QLatin1Char(','));
+            }
+        } else if (m_plannedAction == PlannedAction::Remove) {
+            args << QStringLiteral("--action") << QStringLiteral("remove");
+            if (!m_plannedTargets.isEmpty()) {
+                args << QStringLiteral("--remove") << m_plannedTargets.join(QLatin1Char(','));
+            }
+        } else {
+            args << QStringLiteral("--action") << QStringLiteral("upgrade");
+        }
+
+        const QString expected = !m_expectedRevision.isEmpty() ? m_expectedRevision : m_planRevision;
+        if (!expected.isEmpty()) {
+            args << QStringLiteral("--expected-fingerprint") << expected;
+        }
+
+        m_process->start(workerExe, args);
     } else {
         // Fallback pacman
         connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
@@ -210,6 +335,40 @@ void AlpmBackend::commit() {
 
         m_process->start(QStringLiteral("pacman"), {QStringLiteral("-Syu"), QStringLiteral("--noconfirm")});
     }
+}
+
+void AlpmBackend::commitPlan(const QString &planRevision) {
+    m_expectedRevision = planRevision;
+    commit();
+}
+
+void AlpmBackend::discardPlan() {
+    m_plannedAction = PlannedAction::Upgrade;
+    m_plannedTargets.clear();
+    m_expectedRevision.clear();
+    m_planRevision.clear();
+    m_plannedOps.clear();
+    cancel();
+}
+
+TransactionSnapshot AlpmBackend::currentSnapshot() const {
+    TransactionSnapshot snapshot;
+    if (m_plannedAction == PlannedAction::Install) {
+        snapshot.intent.type = TransactionIntent::Type::Install;
+        for (const auto &t : m_plannedTargets) {
+            snapshot.intent.targets.append(PackageRef{QStringLiteral("alpm"), QString(), t, QString(), QString()});
+        }
+    } else if (m_plannedAction == PlannedAction::Remove) {
+        snapshot.intent.type = TransactionIntent::Type::Remove;
+        for (const auto &t : m_plannedTargets) {
+            snapshot.intent.targets.append(PackageRef{QStringLiteral("alpm"), QString(), t, QString(), QString()});
+        }
+    } else {
+        snapshot.intent.type = TransactionIntent::Type::UpgradeAll;
+    }
+    snapshot.plan.ops = m_plannedOps;
+    snapshot.plan.planRevision = !m_expectedRevision.isEmpty() ? m_expectedRevision : m_planRevision;
+    return snapshot;
 }
 
 void AlpmBackend::cancel() {
@@ -379,6 +538,9 @@ QList<HistoryEntry> AlpmBackend::history(int limit) {
 
     HistoryEntry currentEntry;
     int entryCounter = 1;
+    bool hasInstalls = false;
+    bool hasRemoves = false;
+    bool hasUpgrades = false;
 
     for (int i = lines.size() - 1; i >= 0 && result.size() < limit; --i) {
         QString line = QString::fromUtf8(lines.at(i)).trimmed();
@@ -395,13 +557,35 @@ QList<HistoryEntry> AlpmBackend::history(int limit) {
                 currentEntry.timestamp = QDateTime::fromString(timestampStr, Qt::ISODate);
                 currentEntry.result = QStringLiteral("Success");
                 currentEntry.canUndo = false;
+                hasInstalls = false;
+                hasRemoves = false;
+                hasUpgrades = false;
             } else if (action == QLatin1String("started") && currentEntry.id > 0) {
-                currentEntry.command = QStringLiteral("Systemaktualisierung");
+                if (hasInstalls && !hasUpgrades && !hasRemoves) {
+                    currentEntry.command = QStringLiteral("Paketinstallation");
+                } else if (hasRemoves && !hasUpgrades && !hasInstalls) {
+                    currentEntry.command = QStringLiteral("Paketentfernung");
+                } else if (hasUpgrades) {
+                    currentEntry.command = QStringLiteral("Systemaktualisierung");
+                } else {
+                    currentEntry.command = QStringLiteral("Pakettransaktion");
+                }
                 result.append(currentEntry);
                 currentEntry = HistoryEntry();
             }
-        } else if (currentEntry.id > 0 && line.contains(QLatin1String("[ALPM] upgraded"))) {
-            currentEntry.packagesAltered++;
+        } else if (currentEntry.id > 0) {
+            if (line.contains(QLatin1String("[ALPM] upgraded"))) {
+                currentEntry.packagesAltered++;
+                hasUpgrades = true;
+            } else if (line.contains(QLatin1String("[ALPM] installed"))) {
+                currentEntry.packagesAltered++;
+                hasInstalls = true;
+            } else if (line.contains(QLatin1String("[ALPM] removed"))) {
+                currentEntry.packagesAltered++;
+                hasRemoves = true;
+            } else if (line.contains(QLatin1String("[ALPM] reinstalled"))) {
+                currentEntry.packagesAltered++;
+            }
         }
     }
 

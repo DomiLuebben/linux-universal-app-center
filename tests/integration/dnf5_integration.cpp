@@ -4,6 +4,8 @@
 #include <QTimer>
 #include <QDebug>
 #include "liblut/backend/dnf5/Dnf5Backend.h"
+#include "liblut/catalog/dnf5/Dnf5PackageCatalog.h"
+#include "liblut/transaction/TransactionTypes.h"
 using namespace lut;
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
@@ -117,6 +119,44 @@ int main(int argc, char **argv) {
     commit(QStringLiteral("remove which"));
     if (installed(QStringLiteral("which"))) qFatal("which remains installed");
 
-    qInfo() << "DNF5 install/reinstall/remove/history-undo/swap/downgrade/distro-sync/autoremove passed"
+    // 6. Nativer Store-Pfad mit Dnf5PackageCatalog & TransactionIntent
+    Dnf5PackageCatalog storeCatalog;
+    // a) Angebote und Kandidaten abfragen
+    const auto offers = storeCatalog.offersForPackage(QStringLiteral("tree"));
+    if (offers.isEmpty()) qFatal("StoreCatalog offers for tree empty");
+    const auto candidate = storeCatalog.candidateOffer(QStringLiteral("tree"));
+    if (!candidate.has_value() || !candidate->isCandidate) qFatal("StoreCatalog candidate for tree invalid");
+    if (candidate->packages.first().backend != QLatin1String("dnf5")) qFatal("StoreCatalog backend not dnf5");
+
+    // b) Typisierte Store-Installation über planPackageTransaction
+    TransactionIntent installIntent;
+    installIntent.type = TransactionIntent::Type::Install;
+    installIntent.targets = candidate->packages;
+    begin();
+    backend.planPackageTransaction(installIntent);
+    wait();
+    commit(QStringLiteral("Store install tree"));
+
+    // c) Bestandsabgleich und launchable desktop IDs über StoreCatalog
+    storeCatalog.reload();
+    const auto installedState = storeCatalog.installedStateForPackage(QStringLiteral("tree"));
+    if (!installedState.isFullyInstalled) qFatal("StoreCatalog tree not reported as fully installed after commit");
+    if (installedState.installedPackages.isEmpty() || installedState.installedPackages.first().name != QLatin1String("tree"))
+        qFatal("StoreCatalog installed package ref incorrect");
+
+    // d) Typisierte Store-Entfernung über planPackageTransaction
+    TransactionIntent removeIntent;
+    removeIntent.type = TransactionIntent::Type::Remove;
+    removeIntent.targets = {PackageRef{QStringLiteral("dnf5"), QString(), QStringLiteral("tree"), QString(), QString()}};
+    begin();
+    backend.planPackageTransaction(removeIntent);
+    wait();
+    commit(QStringLiteral("Store remove tree"));
+
+    storeCatalog.reload();
+    const auto afterRemoveState = storeCatalog.installedStateForPackage(QStringLiteral("tree"));
+    if (afterRemoveState.isFullyInstalled) qFatal("StoreCatalog tree still reported as installed after remove");
+
+    qInfo() << "DNF5 install/reinstall/remove/history-undo/swap/downgrade/distro-sync/autoremove and native Store catalog passed"
             << "- mit echten Größen, installierten Paketen, Changelog und Verlauf.";
 }

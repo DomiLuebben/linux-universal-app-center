@@ -10,8 +10,19 @@ qt_add_executable(linux-update-tool
     models/LogModel.cpp
     models/InstalledModel.cpp
     models/HistoryModel.cpp
+    models/TransactionPlanModel.cpp
+    models/StoreModel.cpp
+    catalog/CatalogService.cpp
+    catalog/ApplicationStore.cpp
     theme/SystemPalette.cpp
     theme/Contrast.cpp
+    AppLauncher.cpp
+    ExternalChangeWatcher.cpp
+)
+
+qt_add_resources(linux-update-tool "store_resources"
+    PREFIX "/LinuxUpdateTool/store"
+    FILES ../data/store/curated.json
 )
 
 qt_add_qml_module(linux-update-tool
@@ -33,6 +44,10 @@ qt_add_qml_module(linux-update-tool
         qml/components/EmptyState.qml
         qml/components/Sparkline.qml
         qml/components/NavRail.qml
+        qml/components/AppCard.qml
+        qml/pages/Discover.qml
+        qml/pages/Search.qml
+        qml/pages/AppDetails.qml
         qml/pages/Updates.qml
         qml/pages/Transaction.qml
         qml/pages/Report.qml
@@ -58,6 +73,9 @@ target_link_libraries(linux-update-tool PRIVATE
     Qt6::DBus
     Qt6::Network
     Qt6::Svg
+    AppStreamQt
+    KF6::Service
+    KF6::KIOGui
 )
 
 install(TARGETS linux-update-tool DESTINATION /usr/bin)

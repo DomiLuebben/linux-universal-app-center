@@ -31,4 +31,22 @@ std::unique_ptr<Backend> Backend::createForHost(QString *error) {
     }
     return {};
 }
+
+void Backend::planPackageTransaction(const TransactionIntent &intent) {
+    QStringList names;
+    for (const auto &target : intent.targets) {
+        if (!target.name.isEmpty()) {
+            names.append(target.name);
+        }
+    }
+    if (intent.type == TransactionIntent::Type::Install) {
+        planInstall(names);
+    } else if (intent.type == TransactionIntent::Type::Remove) {
+        planRemove(names);
+    } else {
+        UpgradeOptions opt;
+        planUpgradeAll(opt);
+    }
 }
+}
+

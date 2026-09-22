@@ -30,6 +30,16 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.1.0" date="2026-09-22">
+      <description>
+        <p>Introduce native application store capabilities with AppStream catalog integration, fast local search, multi-backend package catalog and typed transactions for Arch Linux, Fedora DNF5, and Debian/Ubuntu APT, safe media URL validation, and responsive desktop layout.</p>
+      </description>
+    </release>
+    <release version="1.0.1" date="2026-09-21">
+      <description>
+        <p>Fix Pacman update synchronization and package previews, and improve the update interface and error reporting.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-09-21">
       <description>
         <p>Initial release of Linux Update Tool version 1.0.0.</p>

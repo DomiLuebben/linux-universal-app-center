@@ -1,14 +1,27 @@
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
-    qt6-base-dev \
-    libpolkit-qt6-1-dev \
-    libsqlite3-dev \
     pkg-config \
+    qt6-base-dev \
+    qt6-declarative-dev \
+    qt6-svg-dev \
+    libsqlite3-dev \
+    libpolkit-qt6-1-dev \
+    libappstreamqt-dev \
+    libkf6service-dev \
+    libkf6kio-dev \
+    libkirigami-dev \
+    qml6-module-org-kde-kirigami \
+    qml6-module-qtquick-controls \
+    qml6-module-qtquick-layouts \
+    qml6-module-qtquick-templates \
+    qml6-module-qtquick-window \
     ca-certificates \
+    appstream \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 LANG=C.UTF-8

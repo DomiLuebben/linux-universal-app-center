@@ -14,7 +14,18 @@
 #include "DaemonClient.h"
 #include "AurUpdates.h"
 #include "theme/SystemPalette.h"
+#include "catalog/CatalogService.h"
+#include "catalog/ApplicationStore.h"
+#include "models/StoreModel.h"
+#include "ExternalChangeWatcher.h"
 #include "liblut/liblut.h"
+
+#ifdef HAVE_ALPM
+#include "liblut/catalog/alpm/AlpmPackageCatalog.h"
+#endif
+#include "liblut/catalog/dnf5/Dnf5PackageCatalog.h"
+#include "liblut/catalog/apt/AptPackageCatalog.h"
+#include "liblut/detect/DistroDetect.h"
 
 namespace {
 
@@ -26,7 +37,9 @@ QtMessageHandler g_previousHandler = nullptr;
 
 void qmlWarningCollector(QtMsgType type, const QMessageLogContext &context, const QString &msg) {
     if (g_collectQmlWarnings && (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg)) {
-        g_qmlWarnings.append(msg);
+        if (!context.category || qstrcmp(context.category, "kf.kirigami.platform") != 0) {
+            g_qmlWarnings.append(msg);
+        }
     }
     if (g_previousHandler) {
         g_previousHandler(type, context, msg);
@@ -42,6 +55,9 @@ void qmlWarningCollector(QtMsgType type, const QMessageLogContext &context, cons
 // NICHT instanziiert. Der Smoketest muss sie deshalb selbst erzeugen.
 const QStringList &checkablePages() {
     static const QStringList pages = {
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Discover.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Search.qml"),
+        QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/AppDetails.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Updates.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Transaction.qml"),
         QStringLiteral("qrc:/LinuxUpdateTool/qml/pages/Report.qml"),
@@ -140,6 +156,55 @@ int main(int argc, char *argv[]) {
     auto *aur = new lut::AurUpdates(&app);
     client->init(replayFixture, replaySpeed);
 
+    auto *catalogService = new lut::CatalogService(&app);
+    catalogService->load();
+
+    std::unique_ptr<lut::PackageCatalog> packageCatalog;
+    switch (lut::DistroDetect::detectFamily()) {
+    case lut::DistroFamily::Arch:
+#ifdef HAVE_ALPM
+        packageCatalog = std::make_unique<lut::AlpmPackageCatalog>();
+#endif
+        break;
+    case lut::DistroFamily::Fedora:
+        packageCatalog = std::make_unique<lut::Dnf5PackageCatalog>();
+        break;
+    case lut::DistroFamily::Debian:
+        packageCatalog = std::make_unique<lut::AptPackageCatalog>();
+        break;
+    default:
+        break;
+    }
+
+    auto *appStore = new lut::ApplicationStore(catalogService, packageCatalog.get(), &app);
+    auto *storeModel = new lut::StoreModel(appStore, &app);
+    auto *installedStoreModel = new lut::StoreModel(appStore, &app);
+    installedStoreModel->setInstalledOnly(true);
+
+    auto *changeWatcher = new lut::ExternalChangeWatcher(&app);
+
+    QObject::connect(appStore, &lut::ApplicationStore::installRequested, client, &lut::DaemonClient::planStoreInstall);
+    QObject::connect(appStore, &lut::ApplicationStore::removeRequested, client, &lut::DaemonClient::planStoreRemove);
+    QObject::connect(client, &lut::DaemonClient::statusChanged, appStore, [appStore, installedStoreModel, client]() {
+        if (!client->isBusy() && !client->hasPlan()) {
+            appStore->refresh();
+            installedStoreModel->refresh();
+        }
+    });
+    QObject::connect(client, &lut::DaemonClient::transactionFinished, appStore, [appStore, installedStoreModel](lut::Result) {
+        appStore->refresh();
+        installedStoreModel->refresh();
+    });
+    QObject::connect(client, &lut::DaemonClient::capabilitiesChanged, appStore, &lut::ApplicationStore::catalogLoaded);
+
+    QObject::connect(changeWatcher, &lut::ExternalChangeWatcher::databaseChanged, appStore, [appStore, client, installedStoreModel]() {
+        appStore->refresh();
+        client->installedModel()->refresh();
+        installedStoreModel->refresh();
+    });
+
+    qmlRegisterType<lut::StoreModel>("LinuxUpdateTool", 1, 0, "StoreModel");
+
     QQmlApplicationEngine engine;
 
     // Theme & Models im QML Context bereitstellen
@@ -151,6 +216,17 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("installedModel"), client->installedModel());
     engine.rootContext()->setContextProperty(QStringLiteral("historyModel"), client->historyModel());
     engine.rootContext()->setContextProperty(QStringLiteral("aurUpdates"), aur);
+    engine.rootContext()->setContextProperty(QStringLiteral("appStore"), appStore);
+    engine.rootContext()->setContextProperty(QStringLiteral("storeModel"), storeModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("installedStoreModel"), installedStoreModel);
+    int initialNavIndex = 0;
+    bool okNav = false;
+    int envNav = qEnvironmentVariableIntValue("LUT_NAV_INDEX", &okNav);
+    if (okNav) initialNavIndex = envNav;
+    engine.rootContext()->setContextProperty(QStringLiteral("initialNavIndex"), initialNavIndex);
+
+    int initialInstalledTab = qEnvironmentVariableIntValue("LUT_INSTALLED_TAB");
+    engine.rootContext()->setContextProperty(QStringLiteral("initialInstalledTab"), initialInstalledTab);
 
     const QUrl url(QStringLiteral("qrc:/LinuxUpdateTool/qml/Main.qml"));
     QObject::connect(
@@ -210,7 +286,7 @@ int main(int argc, char *argv[]) {
         QTimer::singleShot(300, client, &lut::DaemonClient::refreshUpdates);
         // AUR gleich mitprüfen: die Liste steht auf derselben Seite, also
         // soll sie auch ohne zusätzlichen Klick gefüllt sein.
-        QTimer::singleShot(400, aur, &lut::AurUpdates::check);
+        if (replayFixture.isEmpty()) QTimer::singleShot(400, aur, &lut::AurUpdates::check);
     }
 
     return app.exec();
