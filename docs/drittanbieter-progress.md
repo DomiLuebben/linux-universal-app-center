@@ -111,12 +111,12 @@ Dieses Dokument begleitet die schrittweise Implementierung des Implementierungsp
   - CTest-Suite: **34/34 Tests bestanden (100 %)**
   - `bash scripts/verify-all.sh`: 5/5 bestanden (Build, CTest, QML Smoke Load, Desktop/AppStream Metadata, Farbwächter 0 unzulässige Hex-Farben).
 - **Offscreen-Bildschirmfotos (Abnahme D2):**
-  1. Arch Einstellungen: [`docs/screenshots/d2-settings-arch.png`](file:///home/domi/Projekte/linux-app-store/docs/screenshots/d2-settings-arch.png)
-  2. Arch mit Risikodialog: [`docs/screenshots/d2-settings-arch-risk.png`](file:///home/domi/Projekte/linux-app-store/docs/screenshots/d2-settings-arch-risk.png)
-  3. Fedora Einstellungen: [`docs/screenshots/d2-settings-fedora.png`](file:///home/domi/Projekte/linux-app-store/docs/screenshots/d2-settings-fedora.png)
-  4. Fedora mit Risikodialog: [`docs/screenshots/d2-settings-fedora-risk.png`](file:///home/domi/Projekte/linux-app-store/docs/screenshots/d2-settings-fedora-risk.png)
-  5. Debian Einstellungen: [`docs/screenshots/d2-settings-debian.png`](file:///home/domi/Projekte/linux-app-store/docs/screenshots/d2-settings-debian.png)
-  6. Debian mit Risikodialog: [`docs/screenshots/d2-settings-debian-risk.png`](file:///home/domi/Projekte/linux-app-store/docs/screenshots/d2-settings-debian-risk.png)
+  1. Arch Einstellungen: [`docs/screenshots/d2-settings-arch.png`](file:///home/domi/Projekte/linux-universal-app-center/docs/screenshots/d2-settings-arch.png)
+  2. Arch mit Risikodialog: [`docs/screenshots/d2-settings-arch-risk.png`](file:///home/domi/Projekte/linux-universal-app-center/docs/screenshots/d2-settings-arch-risk.png)
+  3. Fedora Einstellungen: [`docs/screenshots/d2-settings-fedora.png`](file:///home/domi/Projekte/linux-universal-app-center/docs/screenshots/d2-settings-fedora.png)
+  4. Fedora mit Risikodialog: [`docs/screenshots/d2-settings-fedora-risk.png`](file:///home/domi/Projekte/linux-universal-app-center/docs/screenshots/d2-settings-fedora-risk.png)
+  5. Debian Einstellungen: [`docs/screenshots/d2-settings-debian.png`](file:///home/domi/Projekte/linux-universal-app-center/docs/screenshots/d2-settings-debian.png)
+  6. Debian mit Risikodialog: [`docs/screenshots/d2-settings-debian-risk.png`](file:///home/domi/Projekte/linux-universal-app-center/docs/screenshots/d2-settings-debian-risk.png)
 
 ---
 
