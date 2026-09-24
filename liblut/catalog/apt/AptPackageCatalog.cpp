@@ -34,9 +34,57 @@ quint64 AptPackageCatalog::catalogGeneration() const {
 
 void AptPackageCatalog::reload() {
     QMutexLocker locker(&m_mutex);
+    m_inventory.reset();
     m_offersCache.clear();
     m_installedCache.clear();
     m_generation++;
+}
+
+void AptPackageCatalog::prepareSnapshot(const QStringList &packageNames) {
+    QStringList names;
+    for (const auto &name : packageNames) if (Validation::isValidPackageName(name)) names.append(name);
+    names.removeDuplicates();
+    // Each command loads APT's complete cache. Batch names instead of loading it twice per app.
+    for (qsizetype offset = 0; offset < names.size(); offset += 256) {
+        const auto batch = names.mid(offset, 256);
+        const QString policy = QString::fromUtf8(runCommand(m_aptCacheProgram, QStringList{QStringLiteral("policy")} + batch));
+        const QString show = QString::fromUtf8(runCommand(m_aptCacheProgram, QStringList{QStringLiteral("show")} + batch));
+        QHash<QString, QString> policies, records;
+        QString current;
+        for (const auto &line : policy.split(QLatin1Char('\n'))) {
+            if (!line.isEmpty() && !line.front().isSpace() && line.endsWith(QLatin1Char(':')))
+                current = line.chopped(1).section(QLatin1Char(':'), 0, 0);
+            if (!current.isEmpty()) policies[current] += line + QLatin1Char('\n');
+        }
+        for (const auto &record : show.split(QStringLiteral("\n\n"))) {
+            const auto match = QRegularExpression(QStringLiteral("(?:^|\n)Package: ([^\n]+)")).match(record);
+            if (match.hasMatch()) records[match.captured(1).trimmed()] += record + QStringLiteral("\n\n");
+        }
+        QMutexLocker lock(&m_mutex);
+        for (const auto &name : batch) m_offersCache.insert(name, parseAvailableOffers(policies.value(name), records.value(name), name));
+    }
+    const auto installed = allInstalledPackages();
+    QHash<QString, QStringList> desktops;
+    const auto owners = QString::fromUtf8(runCommand(m_dpkgQueryProgram,
+        {QStringLiteral("-S"), QStringLiteral("/usr/share/applications/*.desktop")}));
+    for (const auto &line : owners.split(QLatin1Char('\n'))) {
+        const auto separator = line.indexOf(QStringLiteral(": "));
+        if (separator < 0) continue;
+        const auto path = line.mid(separator + 2).trimmed();
+        if (!path.startsWith(QStringLiteral("/usr/share/applications/")) || !path.endsWith(QStringLiteral(".desktop"))) continue;
+        for (const auto &owner : line.left(separator).split(QStringLiteral(", ")))
+            desktops[owner.section(QLatin1Char(':'), 0, 0)].append(path.mid(24).replace(QLatin1Char('/'), QLatin1Char('-')));
+    }
+    QMutexLocker lock(&m_mutex);
+    for (const auto &name : names) m_installedCache.insert(name, {});
+    for (const auto &pkg : installed) {
+        auto &state = m_installedCache[pkg.name];
+        state.installedPackages.append(PackageRef{QStringLiteral("apt"), {}, pkg.name, pkg.arch, pkg.version});
+        state.isFullyInstalled = true;
+        state.origin = QStringLiteral("apt");
+        state.inventoryRevision = m_generation;
+        state.launchableDesktopIds = desktops.value(pkg.name);
+    }
 }
 
 QByteArray AptPackageCatalog::runCommand(const QString &program, const QStringList &args) const {
@@ -81,12 +129,49 @@ QString AptPackageCatalog::parsePolicyInstalled(const QString &policyOutput) {
     return {};
 }
 
+static QMap<QString, QString> parsePolicyVersionToRepo(const QString &policyOutput) {
+    QMap<QString, QString> versionToRepo;
+    const QStringList lines = policyOutput.split(QLatin1Char('\n'));
+    bool inVersionTable = false;
+    QString currentVersion;
+
+    static const QRegularExpression verLineRegex(QStringLiteral(R"(^\s*(?:\*\*\*\s*)?(\S+)\s+\d+)"));
+    static const QRegularExpression repoLineRegex(QStringLiteral(R"(^\s+\d+\s+(?:https?://\S+|ftp://\S+|file://\S+)\s+(\S+))"));
+
+    for (const QString &line : lines) {
+        if (line.trimmed().startsWith(QLatin1String("Version table:"))) {
+            inVersionTable = true;
+            continue;
+        }
+        if (!inVersionTable) continue;
+
+        if (!line.startsWith(QLatin1String("        "))) {
+            auto verMatch = verLineRegex.match(line);
+            if (verMatch.hasMatch()) {
+                currentVersion = verMatch.captured(1).trimmed();
+                continue;
+            }
+        }
+
+        if (!currentVersion.isEmpty()) {
+            auto repoMatch = repoLineRegex.match(line);
+            if (repoMatch.hasMatch()) {
+                if (!versionToRepo.contains(currentVersion)) {
+                    versionToRepo[currentVersion] = repoMatch.captured(1).trimmed();
+                }
+            }
+        }
+    }
+    return versionToRepo;
+}
+
 QList<PackageOffer> AptPackageCatalog::parseAvailableOffers(const QString &policyOutput,
                                                            const QString &showOutput,
                                                            const QString &packageName) {
     Q_UNUSED(packageName);
     QList<PackageOffer> offers;
     const QString candidateVersion = parsePolicyCandidate(policyOutput);
+    const QMap<QString, QString> versionToRepo = parsePolicyVersionToRepo(policyOutput);
 
     // Zerlege apt-cache show in einzelne Strophen
     QMap<QString, QString> fields;
@@ -99,7 +184,6 @@ QList<PackageOffer> AptPackageCatalog::parseAvailableOffers(const QString &polic
         const QString name = fields.value(QStringLiteral("Package"));
         const QString ver = fields.value(QStringLiteral("Version"));
         const QString arch = fields.value(QStringLiteral("Architecture"));
-        const QString section = fields.value(QStringLiteral("Section"));
 
         bool ok = false;
         qint64 downloadSize = fields.value(QStringLiteral("Size")).toLongLong(&ok);
@@ -118,15 +202,15 @@ QList<PackageOffer> AptPackageCatalog::parseAvailableOffers(const QString &polic
         ref.name = name;
         ref.arch = arch;
         ref.version = ver;
-        ref.repoId = section;
+        ref.repoId = versionToRepo.value(ver);
 
         PackageOffer offer;
         offer.packages = {ref};
         offer.downloadSize = downloadSize;
         offer.installedSize = installedSize;
-        offer.available = true;
+        offer.available = !ref.repoId.isEmpty();
 
-        if (!candidateVersion.isEmpty() && ver == candidateVersion) {
+        if (offer.available && !candidateVersion.isEmpty() && ver == candidateVersion) {
             offer.isCandidate = true;
             offer.priority = 100;
         } else {
@@ -322,9 +406,6 @@ std::optional<PackageOffer> AptPackageCatalog::candidateOffer(const QString &pac
             return offer;
         }
     }
-    if (!offers.isEmpty()) {
-        return offers.first();
-    }
     return std::nullopt;
 }
 
@@ -365,9 +446,13 @@ InstalledState AptPackageCatalog::installedStateForPackage(const QString &packag
 }
 
 QList<InstalledPackage> AptPackageCatalog::allInstalledPackages() {
+    { QMutexLocker lock(&m_mutex); if (m_inventory) return *m_inventory; }
     const QString format = QStringLiteral("${db:Status-Status}\t${Package}\t${Version}\t${Architecture}\t${Installed-Size}\t${binary:Summary}\\n");
     const QByteArray output = runCommand(m_dpkgQueryProgram, {QStringLiteral("-W"), QStringLiteral("-f=") + format});
-    return parseInstalledPackages(QString::fromUtf8(output));
+    auto packages = parseInstalledPackages(QString::fromUtf8(output));
+    QMutexLocker lock(&m_mutex);
+    m_inventory = packages;
+    return packages;
 }
 
 QList<PackageRef> AptPackageCatalog::findPackagesProvidingFile(const QString &filePath) {
@@ -380,7 +465,7 @@ QList<PackageOffer> AptPackageCatalog::searchPackages(const QString &query) {
         return {};
     }
 
-    const QByteArray output = runCommand(m_aptCacheProgram, {QStringLiteral("search"), query});
+    const QByteArray output = runCommand(m_aptCacheProgram, {QStringLiteral("search"), QStringLiteral("--names-only"), QStringLiteral("--"), QRegularExpression::escape(query.left(200))});
     QList<PackageOffer> results;
 
     int count = 0;
@@ -407,6 +492,11 @@ QList<PackageOffer> AptPackageCatalog::searchPackages(const QString &query) {
         if (++count >= 50) break;
     }
 
+    QStringList names;
+    for (const auto &offer : results) names.append(offer.packages.first().name);
+    prepareSnapshot(names);
+    results.clear();
+    for (const auto &name : names) if (auto offer = candidateOffer(name)) results.append(*offer);
     return results;
 }
 

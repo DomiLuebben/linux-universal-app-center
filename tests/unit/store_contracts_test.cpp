@@ -3,9 +3,9 @@
 #include <QJsonDocument>
 #include "liblut/transaction/TransactionTypes.h"
 #include "liblut/catalog/PackageCatalog.h"
-#include "linux-update-tool/models/TransactionPlanModel.h"
-#include "linux-update-tool/models/UpdatesModel.h"
-#include "linux-update-tool/DaemonClient.h"
+#include "linux-app-store/models/TransactionPlanModel.h"
+#include "linux-app-store/models/UpdatesModel.h"
+#include "linux-app-store/DaemonClient.h"
 
 using namespace lut;
 
@@ -25,6 +25,8 @@ private slots:
     void testTransactionPlanModelCounting();
     void testPlanReadyDoesNotOverwriteUpdatesModel(); // TX-27
     void testReplayFixtureCompatibility();
+    void testSourceRankAndOfferSorting();
+    void testSourceCapabilities();
 };
 
 void StoreContractsTest::testPackageRefValidation() {
@@ -42,6 +44,36 @@ void StoreContractsTest::testPackageRefValidation() {
 
     PackageRef invalidLongArch{"alpm", "extra", "firefox", QString(40, 'a'), "1.0"};
     QVERIFY(!invalidLongArch.isValid());
+
+    // Flatpak-Validierung (Reverse-DNS Application ID)
+    PackageRef validFlatpak{"flatpak", "flathub", "org.videolan.VLC", "x86_64", "3.0.21"};
+    QVERIFY(validFlatpak.isValid());
+    PackageRef validFlatpakHyphen{"flatpak", "flathub", "com.visualstudio.code", "x86_64", "1.93.0"};
+    QVERIFY(validFlatpakHyphen.isValid());
+
+    PackageRef invalidFlatpakNoDot{"flatpak", "flathub", "vlc", "x86_64", "3.0.21"};
+    QVERIFY(!invalidFlatpakNoDot.isValid());
+    PackageRef invalidFlatpakDashStart{"flatpak", "flathub", "-org.videolan.VLC", "x86_64", "3.0.21"};
+    QVERIFY(!invalidFlatpakDashStart.isValid());
+    PackageRef invalidFlatpakTrailingDot{"flatpak", "flathub", "org.videolan.VLC.", "x86_64", "3.0.21"};
+    QVERIFY(!invalidFlatpakTrailingDot.isValid());
+
+    // Snap-Validierung (Kleinbuchstaben, Ziffern, Bindestriche)
+    PackageRef validSnap{"snap", "stable", "vlc", "amd64", "3.0.21-1"};
+    QVERIFY(validSnap.isValid());
+    PackageRef validSnapHyphen{"snap", "candidate", "sublime-text", "amd64", "4180"};
+    QVERIFY(validSnapHyphen.isValid());
+
+    PackageRef invalidSnapUpper{"snap", "stable", "VLC", "amd64", "3.0.21"};
+    QVERIFY(!invalidSnapUpper.isValid());
+    PackageRef invalidSnapTrailingDash{"snap", "stable", "vlc-", "amd64", "3.0.21"};
+    QVERIFY(!invalidSnapTrailingDash.isValid());
+    PackageRef invalidSnapDoubleDash{"snap", "stable", "vlc--app", "amd64", "3.0.21"};
+    QVERIFY(!invalidSnapDoubleDash.isValid());
+
+    // Ungültiges Backend
+    PackageRef invalidBackend{"unknown_backend", "repo", "vlc", "x86_64", "1.0"};
+    QVERIFY(!invalidBackend.isValid());
 }
 
 void StoreContractsTest::testPackageRefRoundtrip() {
@@ -178,10 +210,19 @@ void StoreContractsTest::testAppRecordRoundtrip() {
     original.launchableDesktopIds = {QStringLiteral("org.kde.kwrite.desktop")};
     original.origin = QStringLiteral("archlinux");
     original.defaultPackageName = QStringLiteral("kwrite");
+    original.packageNames = {QStringLiteral("kwrite"), QStringLiteral("kwrite-data")};
 
     QJsonObject json = original.toJson();
     AppRecord parsed = AppRecord::fromJson(json);
     QCOMPARE(parsed, original);
+    QCOMPARE(parsed.packageNames.size(), 2);
+
+    // Ältere Daten ohne packageNames dürfen die Anwendung nicht paketlos machen:
+    // dann gilt der primäre Paketname als einelementiger Satz.
+    QJsonObject legacy = json;
+    legacy.remove(QStringLiteral("packageNames"));
+    const AppRecord fallback = AppRecord::fromJson(legacy);
+    QCOMPARE(fallback.packageNames, QStringList{QStringLiteral("kwrite")});
 }
 
 void StoreContractsTest::testCatalogQueryResult() {
@@ -310,6 +351,123 @@ void StoreContractsTest::testReplayFixtureCompatibility() {
         eventCount++;
     }
     QVERIFY(eventCount > 0);
+}
+
+void StoreContractsTest::testSourceRankAndOfferSorting() {
+    // 1. Rangfolge-Konstanten nach Abschnitt 3.1
+    QCOMPARE(sourceRank(QStringLiteral("alpm")), 300);
+    QCOMPARE(sourceRank(QStringLiteral("dnf5")), 300);
+    QCOMPARE(sourceRank(QStringLiteral("apt")), 300);
+    QCOMPARE(sourceRank(QStringLiteral("flatpak")), 200);
+    QCOMPARE(sourceRank(QStringLiteral("snap")), 100);
+    QCOMPARE(sourceRank(QStringLiteral("unknown")), 0);
+
+    PackageOffer nativeOffer;
+    nativeOffer.packages = {PackageRef{"alpm", "extra", "vlc", "x86_64", "3.0.21-1"}};
+    nativeOffer.priority = 10;
+
+    PackageOffer flatpakOffer;
+    flatpakOffer.packages = {PackageRef{"flatpak", "flathub", "org.videolan.VLC", "x86_64", "3.0.21"}};
+    flatpakOffer.priority = 50;
+
+    PackageOffer snapOffer;
+    snapOffer.packages = {PackageRef{"snap", "stable", "vlc", "amd64", "3.0.21-1"}};
+    snapOffer.priority = 100;
+
+    // Fall 1: Alle 3 Quellen vorhanden -> Nativ gewinnt (300 > 200 > 100)
+    QList<PackageOffer> allThree = {snapOffer, flatpakOffer, nativeOffer};
+    sortPackageOffers(allThree);
+    QCOMPARE(allThree.size(), 3);
+    QCOMPARE(allThree.at(0).source(), QStringLiteral("alpm"));
+    QCOMPARE(allThree.at(1).source(), QStringLiteral("flatpak"));
+    QCOMPARE(allThree.at(2).source(), QStringLiteral("snap"));
+
+    // Fall 2: Nativ fehlt -> Flatpak wird vor Snap ausgewählt (200 > 100)
+    QList<PackageOffer> noNative = {snapOffer, flatpakOffer};
+    sortPackageOffers(noNative);
+    QCOMPARE(noNative.size(), 2);
+    QCOMPARE(noNative.at(0).source(), QStringLiteral("flatpak"));
+    QCOMPARE(noNative.at(1).source(), QStringLiteral("snap"));
+
+    // Fall 3: Priorität innerhalb derselben Quelle bleibt wirksam
+    PackageOffer flatpakLowPriority = flatpakOffer;
+    flatpakLowPriority.priority = 5;
+    flatpakLowPriority.packages = {PackageRef{"flatpak", "talk-origin", "org.videolan.VLC", "x86_64", "3.0.20"}};
+
+    PackageOffer flatpakHighPriority = flatpakOffer;
+    flatpakHighPriority.priority = 80;
+    flatpakHighPriority.packages = {PackageRef{"flatpak", "flathub", "org.videolan.VLC", "x86_64", "3.0.21"}};
+
+    QList<PackageOffer> sameSource = {flatpakLowPriority, flatpakHighPriority};
+    sortPackageOffers(sameSource);
+    QCOMPARE(sameSource.at(0).priority, 80);
+    QCOMPARE(sameSource.at(0).packages.first().repoId, QStringLiteral("flathub"));
+    QCOMPARE(sameSource.at(1).priority, 5);
+
+    // Fall 4: Quellrang schlägt interne Priorität
+    // Nativ hat niedrige interne Priorität (5), Flatpak extrem hohe (999)
+    // Nativ muss trotzdem an erster Stelle stehen (Rang 300 > 200)
+    PackageOffer nativeLowPrio = nativeOffer;
+    nativeLowPrio.priority = 5;
+
+    PackageOffer flatpakExtremePrio = flatpakOffer;
+    flatpakExtremePrio.priority = 999;
+
+    QList<PackageOffer> crossSource = {flatpakExtremePrio, nativeLowPrio};
+    sortPackageOffers(crossSource);
+    QCOMPARE(crossSource.at(0).source(), QStringLiteral("alpm"));
+    QCOMPARE(crossSource.at(1).source(), QStringLiteral("flatpak"));
+}
+
+void StoreContractsTest::testSourceCapabilities() {
+    SourceCapabilities alpmCap;
+    alpmCap.source = QStringLiteral("alpm");
+    alpmCap.available = true;
+    alpmCap.install = true;
+    alpmCap.remove = true;
+    alpmCap.systemScope = true;
+    alpmCap.userScope = false;
+    alpmCap.boundRevision = true;
+    alpmCap.installRequiresFullUpgrade = true; // Auf Arch zwingend true
+
+    SourceCapabilities flatpakCap;
+    flatpakCap.source = QStringLiteral("flatpak");
+    flatpakCap.available = true;
+    flatpakCap.install = true;
+    flatpakCap.remove = true;
+    flatpakCap.systemScope = true;
+    flatpakCap.userScope = true;
+    flatpakCap.boundRevision = true;
+    flatpakCap.installRequiresFullUpgrade = false; // Flatpak koppelt niemals an Systemupgrade
+
+    SourceCapabilities snapCap;
+    snapCap.source = QStringLiteral("snap");
+    snapCap.available = false; // Auf Testhost fehlt snapd
+    snapCap.install = true;
+    snapCap.remove = true;
+    snapCap.systemScope = true;
+    snapCap.userScope = false;
+    snapCap.boundRevision = true;
+    snapCap.installRequiresFullUpgrade = false; // Snap koppelt niemals an Systemupgrade
+
+    // JSON-Roundtrip
+    QJsonObject json = flatpakCap.toJson();
+    SourceCapabilities parsed = SourceCapabilities::fromJson(json);
+    QCOMPARE(parsed, flatpakCap);
+    QCOMPARE(parsed.installRequiresFullUpgrade, false);
+
+    // Capabilities Container
+    Capabilities caps;
+    caps.setSourceCapabilities(alpmCap);
+    caps.setSourceCapabilities(flatpakCap);
+    caps.setSourceCapabilities(snapCap);
+
+    QCOMPARE(caps.sources.size(), 3);
+    QCOMPARE(caps.sourceCapabilities(QStringLiteral("alpm")).installRequiresFullUpgrade, true);
+    QCOMPARE(caps.sourceCapabilities(QStringLiteral("flatpak")).installRequiresFullUpgrade, false);
+    QCOMPARE(caps.sourceCapabilities(QStringLiteral("snap")).installRequiresFullUpgrade, false);
+    QCOMPARE(caps.sourceCapabilities(QStringLiteral("snap")).available, false);
+    QCOMPARE(caps.sourceCapabilities(QStringLiteral("nonexistent")).available, false);
 }
 
 QTEST_MAIN(StoreContractsTest)

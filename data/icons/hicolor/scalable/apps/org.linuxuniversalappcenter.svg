@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Linux Universal App Center: App-Raster (viele Apps aus allen Quellen)
+       mit einer Plus-Kachel (Apps hinzufügen). Bewusst ohne Kreispfeile:
+       das war das Symbol des früheren Updaters. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f8ff7"/>
+      <stop offset="1" stop-color="#1f5fd6"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e3ecfb"/>
+    </linearGradient>
+    <linearGradient id="plus" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb347"/>
+      <stop offset="1" stop-color="#f28c1a"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0b1f4d" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Grundfläche -->
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="8.5" y="8.5" width="111" height="111" rx="25.5" fill="none" stroke="#ffffff" stroke-opacity="0.18"/>
+
+  <!-- App-Kacheln -->
+  <rect x="28" y="28" width="32" height="32" rx="9" fill="url(#tile)"/>
+  <rect x="68" y="28" width="32" height="32" rx="9" fill="url(#tile)"/>
+  <rect x="28" y="68" width="32" height="32" rx="9" fill="url(#tile)"/>
+
+  <!-- Kleine Farbpunkte: verschiedene Apps -->
+  <circle cx="44" cy="44" r="7" fill="#1f5fd6"/>
+  <path d="M 84 36.5 L 91.5 50 L 76.5 50 Z" fill="#2fb36b"/>
+  <rect x="37.5" y="77.5" width="13" height="13" rx="3" fill="#8a5cf6"/>
+
+  <!-- Plus-Kachel: Apps hinzufügen -->
+  <rect x="68" y="68" width="32" height="32" rx="9" fill="url(#plus)"/>
+  <rect x="81.5" y="74" width="5" height="20" rx="2.5" fill="#ffffff"/>
+  <rect x="74" y="81.5" width="20" height="5" rx="2.5" fill="#ffffff"/>
+</svg>

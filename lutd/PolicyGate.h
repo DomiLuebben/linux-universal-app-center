@@ -18,6 +18,8 @@ public:
     static const QString ActionInstall;
     static const QString ActionRemove;
     static const QString ActionManageOthers;
+    static const QString ActionManageRepositories;
+    static const QString ActionPacstall;
 };
 
 } // namespace lut

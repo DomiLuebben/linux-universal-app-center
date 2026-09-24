@@ -1,6 +1,6 @@
 #include <QTest>
 #include <QElapsedTimer>
-#include "linux-update-tool/models/UpdatesModel.h"
+#include "linux-app-store/models/UpdatesModel.h"
 
 class ListPerfTest : public QObject {
     Q_OBJECT

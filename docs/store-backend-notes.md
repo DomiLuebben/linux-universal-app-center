@@ -55,3 +55,32 @@ Dieses Dokument dokumentiert die Besonderheiten, Befunde und Integrationsdetails
 - Standardmäßig `remove` (kein `purge`, kein ungewolltes `autoremove`).
 - Schutz essentieller und geschützter Pakete (`Essential: yes`, `Protected: yes`).
 - Conffile-Fragen konservativ behandeln; kein unbedientes Blockieren auf `stdin`.
+
+---
+
+## 4. Flatpak-Backend
+
+### 4.1 Architekturentscheidung: CLI vs. libflatpak
+- **Entscheidung:** Umsetzung über die CLI (`/usr/bin/flatpak`) mit `--columns=` und Argumentlisten (`QProcess`).
+- **Begründung:**
+  1. Passt zum etablierten DNF5-Muster im Projekt.
+  2. Vermeidet GObject-/GLib-Eventloop-Kollisionen mit Qt6 in Multi-Threading-Umgebungen (`native-package-transactions`-Thread).
+  3. `flatpak list --columns=application:f,origin:f,installation:f,ref:f,active:f,version:f,runtime:f` liefert bei Pipeline-/Nicht-TTY-Aufrufen saubere tab-getrennte Datensätze ohne Header.
+  4. Ermöglicht saubere Dependency Injection (`ProcessRunner`, `CommandRunner`) für hermetische Offline-Unit-Tests ohne Root-Rechte und ohne Host-Modifikation.
+
+### 4.2 Rechte & Benutzer- vs. Systembereich (Abschnitt 6.2)
+- Installation und Deinstallation erfolgen **ausschließlich systemweit** (`--system`) über den privilegierten `lutd`-Dienst mit Polkit-Autorisierung (`org.linuxupdatetool.install` / `.remove`).
+- Benutzerinstallationen (`--user`) werden erkannt, als installiert geführt und können gestartet werden.
+- Eine Entfernung von `user`-Installationen über den Root-Daemon wird strikt abgewiesen mit der genauen Meldung: `Benutzerinstallationen (user) können nicht über den systemweiten Dienst entfernt werden.`
+
+### 4.3 Commit-Bindung (Abschnitt 6.4)
+- Bindung der Transaktionsausführung an den exakten OSTree-Commit-Hash über `flatpak remote-info -c <remote> <ref>` (64-Zeichen Hex-Hash).
+- Bei der Ausführung (`commitPlan`) wird der aktuelle Remote-Commit erneut abgeglichen. Hat sich der Hash zwischen Planung und Bestätigung geändert, bricht die Transaktion ab (`FingerprintMismatch`) und fordert eine Neuplanung an.
+
+### 4.4 Laufzeitumgebungen & Hygiene (Abschnitt 6.3)
+- Erforderliche Runtimes werden via `remote-info --show-runtime` ermittelt und gegen `flatpak list --runtime` abgeglichen. Fehlende Runtimes erscheinen als eigene Zeile (`Kind::Install`, Zusammenfassung `Laufzeitumgebung`) in der Transaktionsvorschau.
+- Bei der Deinstallation wird **kein** automatisches `--unused` ausgeführt, um andere Apps nicht zu gefährden.
+
+### 4.5 Vollständige Entkopplung von ALPM (Abschnitt 4.2)
+- `installRequiresFullUpgrade` ist für Flatpak strikt `false`. Flatpak-Operationen lösen niemals ein Arch-Systemupgrade aus.
+

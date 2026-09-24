@@ -1,0 +1,9 @@
+post_install() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl try-restart lutd.service >/dev/null 2>&1 || true
+}
+
+post_upgrade() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl try-restart lutd.service >/dev/null 2>&1 || true
+}

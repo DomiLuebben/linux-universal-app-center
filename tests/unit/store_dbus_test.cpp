@@ -5,7 +5,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include "lutd/TransactionManager.h"
-#include "linux-update-tool/DaemonClient.h"
+#include "linux-app-store/DaemonClient.h"
 #include "liblut/protocol/events.h"
 #include "liblut/backend/Backend.h"
 #include "liblut/backend/replay/ReplayBackend.h"
@@ -50,6 +50,13 @@ public:
     }
 };
 
+static PackageOp makeOp(const QString &name, PackageOp::Kind kind) {
+    PackageOp op;
+    op.name = name;
+    op.kind = kind;
+    return op;
+}
+
 class StoreDbusTest : public QObject {
     Q_OBJECT
 
@@ -79,6 +86,8 @@ private slots:
     void testCancellationBoundToPhase();
     void testRingBufferOverflow();
     void testConnectionLossDoesNotReportInstallationFailed();
+    void testEmptyPlanReleasesDaemon();
+    void testOwnerCanReplacePendingPlan();
 };
 
 void StoreDbusTest::testReattachActiveTransaction() {
@@ -173,6 +182,7 @@ void StoreDbusTest::testOwnershipSameUidAllowed() {
 
     // PlanReady emittieren
     PlanReady plan;
+    plan.ops.append(makeOp(QStringLiteral("blender"), PackageOp::Kind::Install));
     plan.planRevision = QStringLiteral("rev-blender");
     backendPtr->emitMockEvent(plan);
 
@@ -199,6 +209,7 @@ void StoreDbusTest::testOwnershipDifferentUidRejected() {
 
     QDBusObjectPath path = tm.PlanPackageTransaction(QStringLiteral("Install"), targets, {});
     PlanReady plan;
+    plan.ops.append(makeOp(QStringLiteral("vlc"), PackageOp::Kind::Install));
     plan.planRevision = QStringLiteral("rev-vlc");
     backendPtr->emitMockEvent(plan);
 
@@ -214,6 +225,7 @@ void StoreDbusTest::testOwnershipDifferentUidRejected() {
 
 void StoreDbusTest::testEventBeforeMethodReply() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     Capabilities caps;
     caps.install = true;
     client.setCapabilitiesForTest(caps);
@@ -240,6 +252,7 @@ void StoreDbusTest::testEventBeforeMethodReply() {
 
 void StoreDbusTest::testMonotoneEventSequence() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     client.setPendingTransactionForTest(true);
     QDBusObjectPath txPath(QStringLiteral("/org/linuxupdatetool/Transaction/1"));
     deliver(client, txPath, ItemStarted{QStringLiteral("kate"), PackageOp::Kind::Install, 100}, 1);
@@ -260,6 +273,7 @@ void StoreDbusTest::testMonotoneEventSequence() {
 
 void StoreDbusTest::testDuplicateTerminalEvents() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     QDBusObjectPath txPath(QStringLiteral("/org/linuxupdatetool/Transaction/1"));
 
     QSignalSpy spyFinished(&client, &DaemonClient::transactionFinished);
@@ -280,6 +294,7 @@ void StoreDbusTest::testInventoryRefreshOnAllTerminalStates() {
     // 1. Success
     {
         DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
         QSignalSpy spy(&client, &DaemonClient::transactionFinished);
         client.planStoreInstall(QStringLiteral("app1"));
         deliver(client, QDBusObjectPath(QStringLiteral("/org/linuxupdatetool/Transaction/1")),
@@ -290,6 +305,7 @@ void StoreDbusTest::testInventoryRefreshOnAllTerminalStates() {
     // 2. SuccessWithWarnings
     {
         DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
         QSignalSpy spy(&client, &DaemonClient::transactionFinished);
         client.planStoreInstall(QStringLiteral("app2"));
         deliver(client, QDBusObjectPath(QStringLiteral("/org/linuxupdatetool/Transaction/2")),
@@ -300,6 +316,7 @@ void StoreDbusTest::testInventoryRefreshOnAllTerminalStates() {
     // 3. Failed
     {
         DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
         QSignalSpy spy(&client, &DaemonClient::transactionFinished);
         client.planStoreInstall(QStringLiteral("app3"));
         deliver(client, QDBusObjectPath(QStringLiteral("/org/linuxupdatetool/Transaction/3")),
@@ -310,6 +327,7 @@ void StoreDbusTest::testInventoryRefreshOnAllTerminalStates() {
     // 4. Cancelled
     {
         DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
         QSignalSpy spy(&client, &DaemonClient::transactionFinished);
         client.planStoreInstall(QStringLiteral("app4"));
         deliver(client, QDBusObjectPath(QStringLiteral("/org/linuxupdatetool/Transaction/4")),
@@ -332,6 +350,7 @@ void StoreDbusTest::testCancellationBoundToPhase() {
 
     QDBusObjectPath path = tm.PlanPackageTransaction(QStringLiteral("Install"), targets, {});
     PlanReady plan;
+    plan.ops.append(makeOp(QStringLiteral("nano"), PackageOp::Kind::Install));
     plan.planRevision = QStringLiteral("rev-nano");
     backendPtr->emitMockEvent(plan);
 
@@ -383,6 +402,7 @@ void StoreDbusTest::testRingBufferOverflow() {
 
 void StoreDbusTest::testConnectionLossDoesNotReportInstallationFailed() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     QSignalSpy connSpy(&client, &DaemonClient::connectionChanged);
     QSignalSpy statusSpy(&client, &DaemonClient::statusChanged);
 
@@ -399,6 +419,58 @@ void StoreDbusTest::testConnectionLossDoesNotReportInstallationFailed() {
     QVERIFY(client.statusMessage().contains(QStringLiteral("Verbindung zum Systemdienst verloren")));
     QVERIFY(connSpy.count() >= 1);
     QVERIFY(statusSpy.count() >= 1);
+}
+
+// Regression 22.09.2026: Die automatische Prüfung fand keine Systemupdates;
+// der leere Plan blieb im Daemon hängen und jede weitere Aktion scheiterte
+// mit "Eine Paketoperation läuft bereits".
+void StoreDbusTest::testEmptyPlanReleasesDaemon() {
+    TransactionManager tm;
+    auto mockBackend = std::make_unique<MockDbusBackend>();
+    auto *backendPtr = mockBackend.get();
+    tm.setBackendForTest(std::move(mockBackend));
+
+    QDBusObjectPath path = tm.PlanUpgrade({});
+    QCOMPARE(path.path(), QStringLiteral("/org/linuxupdatetool/Transaction/1"));
+    PlanReady empty;
+    empty.planRevision = QStringLiteral("rev-empty");
+    backendPtr->emitMockEvent(empty);
+    backendPtr->emitMockEvent(PhaseChanged{Phase::Idle, QStringLiteral("Aktualisierungsplan bereit"), false});
+
+    QVERIFY(tm.GetActiveTransactions().isEmpty());
+    QCOMPARE(tm.PlanUpgrade({}).path(), QStringLiteral("/org/linuxupdatetool/Transaction/2"));
+
+    DaemonClient client;
+    client.setPendingTransactionForTest(true);
+    client.refreshUpdatesStateForTest();
+    deliver(client, QDBusObjectPath(QStringLiteral("/org/linuxupdatetool/Transaction/7")), empty, 1);
+    QVERIFY(!client.hasPlan());
+    QVERIFY(!client.isBusy());
+    QVERIFY(!client.lastCheckedString().isEmpty());
+}
+
+// Ein noch unbestätigter Plan darf von seinem Eigentümer durch eine neue
+// Prüfung ersetzt werden; ein fremder Benutzer bleibt ausgesperrt.
+void StoreDbusTest::testOwnerCanReplacePendingPlan() {
+    TransactionManager tm;
+    auto mockBackend = std::make_unique<MockDbusBackend>();
+    auto *backendPtr = mockBackend.get();
+    tm.setBackendForTest(std::move(mockBackend));
+    tm.setCallerUidForTest(1000);
+
+    QDBusObjectPath path = tm.PlanUpgrade({});
+    PlanReady plan;
+    plan.ops.append(makeOp(QStringLiteral("fluidsynth"), PackageOp::Kind::Upgrade));
+    plan.planRevision = QStringLiteral("rev-fluidsynth");
+    backendPtr->emitMockEvent(plan);
+    QCOMPARE(tm.GetActiveTransactions().size(), 1);
+
+    tm.setCallerUidForTest(1001);
+    QCOMPARE(tm.PlanUpgrade({}).path(), QStringLiteral("/"));
+    QCOMPARE(tm.GetActiveTransactions().first().path(), path.path());
+
+    tm.setCallerUidForTest(1000);
+    QCOMPARE(tm.PlanUpgrade({}).path(), QStringLiteral("/org/linuxupdatetool/Transaction/2"));
 }
 
 QTEST_MAIN(StoreDbusTest)

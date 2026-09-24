@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.linuxuniversalappcenter.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Linux Universal App Center</name>
+  <summary>Native application store and system updater with honest byte-weighted progress</summary>
+  <description>
+    <p>
+      Linux Universal App Center is a native, modern application store and system updater designed for Linux distributions (DNF5, APT, and Pacman).
+      It solves progress bar stutter and freeze by introducing a byte-weighted progress model, clear post-transaction phase resolution (initramfs, bootloader, kernel hooks), and system hygiene management.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Native backends for DNF5, APT, and Pacman without PackageKit overhead.</li>
+      <li>AppStream catalog integration with fast local search, categories, and curated collections.</li>
+      <li>Monotonic, honest, byte-weighted progress tracking across all transaction phases.</li>
+      <li>Automatic post-transaction reporting with service restart hints and kernel reboot detection.</li>
+      <li>Clean separation of privileges with root daemon and unprivileged GUI.</li>
+      <li>System hygiene tools: clean orphan packages, manage package caches, and review configuration files.</li>
+      <li>Dynamic color palettes integrating seamlessly with KDE Plasma and modern desktop environments.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.linuxuniversalappcenter.desktop</launchable>
+  <replaces>
+    <id>org.linuxappstore.desktop</id>
+  </replaces>
+  <provides>
+    <binary>linux-universal-app-center</binary>
+    <binary>linux-app-store</binary>
+    <binary>linux-update-tool</binary>
+  </provides>
+  <url type="homepage">https://github.com/DomiLuebben</url>
+  <developer id="org.linuxuniversalappcenter">
+    <name>Dominik Lübben</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.8.1" date="2026-09-24">
+      <description>
+        <p>Installieren und Prüfen funktionieren auch, nachdem sich der Systemdienst nach zwei Minuten Leerlauf beendet hat. Bisher zeigte jede App dann „Aktion nicht unterstützt", und Aufrufe gingen nicht mehr raus, bis der Store neu gestartet wurde. Jetzt wird der Dienst bei Bedarf automatisch wieder gestartet.</p>
+      </description>
+    </release>
+    <release version="1.8.0" date="2026-09-24">
+      <description>
+        <p>Neuer Name: Linux Universal App Center (vorher Linux App Store), mit neuem Symbol: App-Raster statt Update-Pfeilen. Einstellungen und Caches werden übernommen, die alten Befehle bleiben erhalten. Entdecken zeigt im installierten Paket wieder die Sammlungen (eingebettete Datei wurde nicht gefunden), und „Waisen entfernen" funktioniert unter Arch: Die verwaisten Pakete werden mit Vorschau zum Entfernen vorgelegt.</p>
+      </description>
+    </release>
+    <release version="1.7.0" date="2026-09-24">
+      <description>
+        <p>Neuer Bereich „Drittanbieter-Quellen" mit verpflichtendem Risikodialog. Arch: AUR standardmäßig aus, Chaotic-AUR eingeordnet. Fedora: RPM Fusion Free/Nonfree und Terra. Debian/Ubuntu: Pacstall, eingerichtet über die signierte PPR (Schlüssel mit festem Fingerabdruck) und installiert über die normale Planvorschau; Aktualisierungen mit Prüfansicht der Pacscripts. Nicht installierte Quellen werden nirgends mehr angezeigt. Der Store baut wieder auf Debian 13 und Fedora 44.</p>
+      </description>
+    </release>
+    <release version="1.6.1" date="2026-09-23">
+      <description>
+        <p>Ein fertig geprüfter, noch nicht gestarteter Systemplan erscheint in der Statusleiste als „bereit – noch nicht gestartet" mit dem Knopf „Jetzt aktualisieren". Vorher hieß er „Transaktion aktiv …" und „Anzeigen" öffnete ein leeres Fortschrittsfenster, das bei „Aktualisierungsplan bereit" zu hängen schien. Nach einem Neustart des Fensters erscheint ein wartender Plan wieder mit seiner Paketliste.</p>
+      </description>
+    </release>
+    <release version="1.6.0" date="2026-09-23">
+      <description>
+        <p>Fedora: Terra (Fyra Labs) als Drittanbieter-Quelle samt Extras, NVIDIA und Mesa; RPM Fusion wird über die offiziellen Einrichtungspakete mit Signaturschlüssel aktiviert. Die bisherige RPM-Fusion-Vorlage schrieb eine Quelle ohne Schlüssel, aus der sich nichts installieren ließ.</p>
+      </description>
+    </release>
+    <release version="1.5.0" date="2026-09-23">
+      <description>
+        <p>Neue Anordnung nach dem Vorbild des Ubuntu App Center: Kategorien in der Seitenleiste, Suchfeld oben mittig, Verwalten fasst Aktualisierungen und installierte Apps zusammen. Entdecken als dichtes Raster wie im Mac App Store; Detailseite mit Kennzahlenzeile.</p>
+      </description>
+    </release>
+    <release version="1.4.0" date="2026-09-23">
+      <description>
+        <p>Gemeinsames Fortschrittsfenster für System, Flatpak, Snap und AUR; alle AUR-Pakete in einem Durchgang mit einer Prüfansicht und einer Passwortabfrage; Anzahl der Aktualisierungen im Tray-Symbol; erledigte Pakete verschwinden aus der Liste.</p>
+      </description>
+    </release>
+    <release version="1.3.2" date="2026-09-22">
+      <description>
+        <p>Fix system updates getting stuck: an update check that finds nothing no longer blocks the daemon, and checking again replaces a pending, unconfirmed plan.</p>
+        <p>Confirming an update no longer fails when the password prompt takes longer than 25 seconds, the progress page opens only once, and the daemon reports its real version.</p>
+      </description>
+    </release>
+    <release version="1.3.1" date="2026-09-22">
+      <description>
+        <p>Comprehensive remote and CDN icon fetching inspired by Bazaar: automatically download and cache high-resolution 128x128 icons from the Flathub CDN for all applications lacking local assets, increased MediaCache queues and multi-threaded image decoding, and refined origin chip visibility.</p>
+      </description>
+    </release>
+    <release version="1.3.0" date="2026-09-22">
+      <description>
+        <p>System tray integration with background automatic update checks and categorized breakdown (XY Nativ, XY Flatpak, XY Snap), screenshot lightbox viewer with keyboard and mouse navigation, high-resolution local and remote icon resolution for Flathub and AppStream components, and asynchronous Flatpak updates without UI blocking.</p>
+      </description>
+    </release>
+    <release version="1.2.0" date="2026-09-22">
+      <description>
+        <p>Introduce multi-source application support: Native (ALPM/DNF5/APT), Flatpak with Flathub catalog integration and commit binding, and Snap backend architecture with socket availability gating. Unified updates view, cross-source mutation locking, and deduplicated multi-source history tracking.</p>
+      </description>
+    </release>
+    <release version="1.1.0" date="2026-09-22">
+      <description>
+        <p>Introduce native application store capabilities with AppStream catalog integration, fast local search, multi-backend package catalog and typed transactions for Arch Linux, Fedora DNF5, and Debian/Ubuntu APT, safe media URL validation, and responsive desktop layout.</p>
+      </description>
+    </release>
+    <release version="1.0.1" date="2026-09-21">
+      <description>
+        <p>Fix Pacman update synchronization and package previews, and improve the update interface and error reporting.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-09-21">
+      <description>
+        <p>Initial release of Linux Update Tool version 1.0.0.</p>
+      </description>
+    </release>
+  </releases>
+</component>

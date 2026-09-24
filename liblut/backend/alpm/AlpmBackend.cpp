@@ -132,34 +132,41 @@ void AlpmBackend::planInstall(const QStringList &names) {
         return;
     }
 
-    QProcess proc;
+    if (!m_process) {
+        m_process = new QProcess(this);
+    } else if (m_process->state() != QProcess::NotRunning) {
+        m_process->kill();
+        m_process->waitForFinished(500);
+    }
+    m_process->disconnect();
+    m_workerDoneEmitted = false;
+
+    connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
+        while (m_process && m_process->canReadLine()) {
+            parseWorkerOutputLine(QString::fromUtf8(m_process->readLine()).trimmed());
+        }
+    });
+
+    connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, fail](int exitCode, QProcess::ExitStatus exitStatus) {
+        if (m_process) {
+            QByteArray remaining = m_process->readAllStandardOutput();
+            if (!remaining.isEmpty()) {
+                for (const QString &line : QString::fromUtf8(remaining).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                    parseWorkerOutputLine(line.trimmed());
+                }
+            }
+        }
+        if (m_workerDoneEmitted) return;
+        if (exitStatus != QProcess::NormalExit || exitCode != 0 || m_plannedOps.isEmpty()) {
+            fail(QStringLiteral("ALPM lieferte keinen gültigen Paketplan oder Vorgang abgebrochen."));
+        } else {
+            emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Installationsplan bereit"), false});
+        }
+    });
+
     QStringList args = {QStringLiteral("--plan"), QStringLiteral("--action"), QStringLiteral("install"), QStringLiteral("--install"), names.join(QLatin1Char(','))};
-    proc.start(worker, args);
-    if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
-        proc.kill(); proc.waitForFinished();
-        fail(QStringLiteral("Paketplan konnte nicht erstellt werden."));
-        return;
-    }
-
-    std::optional<PlanReady> plan;
-    QString failure;
-    for (const QByteArray &line : proc.readAllStandardOutput().split('\n')) {
-        auto event = deserializeEvent(QJsonDocument::fromJson(line).object());
-        if (!event) continue;
-        if (auto *ready = std::get_if<PlanReady>(&*event)) plan = *ready;
-        else if (auto *done = std::get_if<TransactionDone>(&*event)) failure = done->summary;
-        else emit eventEmitted(*event);
-    }
-
-    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || !plan) {
-        fail(failure.isEmpty() ? QStringLiteral("ALPM lieferte keinen gültigen Paketplan.") : failure);
-        return;
-    }
-
-    m_plannedOps = plan->ops;
-    m_planRevision = plan->planRevision;
-    emit eventEmitted(*plan);
-    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Installationsplan bereit"), false});
+    m_process->start(worker, args);
 }
 
 void AlpmBackend::planRemove(const QStringList &names) {
@@ -186,34 +193,41 @@ void AlpmBackend::planRemove(const QStringList &names) {
         return;
     }
 
-    QProcess proc;
+    if (!m_process) {
+        m_process = new QProcess(this);
+    } else if (m_process->state() != QProcess::NotRunning) {
+        m_process->kill();
+        m_process->waitForFinished(500);
+    }
+    m_process->disconnect();
+    m_workerDoneEmitted = false;
+
+    connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
+        while (m_process && m_process->canReadLine()) {
+            parseWorkerOutputLine(QString::fromUtf8(m_process->readLine()).trimmed());
+        }
+    });
+
+    connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, fail](int exitCode, QProcess::ExitStatus exitStatus) {
+        if (m_process) {
+            QByteArray remaining = m_process->readAllStandardOutput();
+            if (!remaining.isEmpty()) {
+                for (const QString &line : QString::fromUtf8(remaining).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                    parseWorkerOutputLine(line.trimmed());
+                }
+            }
+        }
+        if (m_workerDoneEmitted) return;
+        if (exitStatus != QProcess::NormalExit || exitCode != 0 || m_plannedOps.isEmpty()) {
+            fail(QStringLiteral("ALPM lieferte keinen gültigen Paketplan oder Vorgang abgebrochen."));
+        } else {
+            emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Entfernungsplan bereit"), false});
+        }
+    });
+
     QStringList args = {QStringLiteral("--plan"), QStringLiteral("--action"), QStringLiteral("remove"), QStringLiteral("--remove"), names.join(QLatin1Char(','))};
-    proc.start(worker, args);
-    if (!proc.waitForStarted(5000) || !proc.waitForFinished(60000)) {
-        proc.kill(); proc.waitForFinished();
-        fail(QStringLiteral("Paketplan konnte nicht erstellt werden."));
-        return;
-    }
-
-    std::optional<PlanReady> plan;
-    QString failure;
-    for (const QByteArray &line : proc.readAllStandardOutput().split('\n')) {
-        auto event = deserializeEvent(QJsonDocument::fromJson(line).object());
-        if (!event) continue;
-        if (auto *ready = std::get_if<PlanReady>(&*event)) plan = *ready;
-        else if (auto *done = std::get_if<TransactionDone>(&*event)) failure = done->summary;
-        else emit eventEmitted(*event);
-    }
-
-    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 || !plan) {
-        fail(failure.isEmpty() ? QStringLiteral("ALPM lieferte keinen gültigen Paketplan.") : failure);
-        return;
-    }
-
-    m_plannedOps = plan->ops;
-    m_planRevision = plan->planRevision;
-    emit eventEmitted(*plan);
-    emit eventEmitted(PhaseChanged{Phase::Idle, QStringLiteral("Entfernungsplan bereit"), false});
+    m_process->start(worker, args);
 }
 
 QString AlpmBackend::findWorkerExecutable() const {
@@ -238,7 +252,20 @@ void AlpmBackend::commit() {
     emit eventEmitted(PhaseChanged{Phase::Download, QStringLiteral("Pakete holen"), true});
 
     QString workerExe = findWorkerExecutable();
-    bool useWorker = !workerExe.isEmpty();
+    if (workerExe.isEmpty()) {
+        emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("ALPM-Worker fehlt"), false});
+        emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("ALPM-Worker nicht gefunden. Bitte Installation prüfen."), false, {}, 0});
+        return;
+    }
+
+    const QString expected = !m_expectedRevision.isEmpty() ? m_expectedRevision : m_planRevision;
+    if (m_plannedAction == PlannedAction::Install || m_plannedAction == PlannedAction::Remove) {
+        if (expected.isEmpty()) {
+            emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("Kein gültiger Planungsfingerprint vorhanden"), false});
+            emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("Kein gültiger Planungsfingerprint vorhanden. Bitte Transaktion neu planen."), false, {}, 0});
+            return;
+        }
+    }
 
     if (!m_process) {
         m_process = new QProcess(this);
@@ -259,82 +286,58 @@ void AlpmBackend::commit() {
         emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
     });
 
-    if (useWorker) {
-        connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
-            while (m_process->canReadLine()) {
-                parseWorkerOutputLine(QString::fromUtf8(m_process->readLine()).trimmed());
+    connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
+        while (m_process->canReadLine()) {
+            parseWorkerOutputLine(QString::fromUtf8(m_process->readLine()).trimmed());
+        }
+    });
+    connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
+        QByteArray remaining = m_process->readAllStandardOutput();
+        if (!remaining.isEmpty()) {
+            QStringList lines = QString::fromUtf8(remaining).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            for (const QString &line : lines) {
+                parseWorkerOutputLine(line.trimmed());
             }
-        });
-        connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
-            QByteArray remaining = m_process->readAllStandardOutput();
-            if (!remaining.isEmpty()) {
-                QStringList lines = QString::fromUtf8(remaining).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-                for (const QString &line : lines) {
-                    parseWorkerOutputLine(line.trimmed());
-                }
-            }
-            if (m_workerDoneEmitted) {
-                return; // Worker (oder cancel()) hat das Ergebnis bereits gemeldet
-            }
+        }
+        if (m_workerDoneEmitted) {
+            return; // Worker (oder cancel()) hat das Ergebnis bereits gemeldet
+        }
 
-            // Jeder andere Ausgang muss die Transaktion abschliessen, sonst bleibt
-            // die Oberfläche dauerhaft auf der Fortschrittsseite stehen.
-            QString reason;
-            if (exitStatus == QProcess::CrashExit) {
-                reason = QStringLiteral("Worker-Prozess abgestürzt");
-            } else if (exitCode != 0) {
-                reason = QStringLiteral("Worker beendet mit Code %1").arg(exitCode);
-            } else {
-                reason = QStringLiteral("Worker endete ohne Abschlussmeldung");
-            }
-            m_workerDoneEmitted = true;
-            emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
-            emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
-        });
-
-        QStringList args;
-        args << QStringLiteral("--commit");
-        if (m_plannedAction == PlannedAction::Install) {
-            args << QStringLiteral("--action") << QStringLiteral("install");
-            if (!m_plannedTargets.isEmpty()) {
-                args << QStringLiteral("--install") << m_plannedTargets.join(QLatin1Char(','));
-            }
-        } else if (m_plannedAction == PlannedAction::Remove) {
-            args << QStringLiteral("--action") << QStringLiteral("remove");
-            if (!m_plannedTargets.isEmpty()) {
-                args << QStringLiteral("--remove") << m_plannedTargets.join(QLatin1Char(','));
-            }
+        QString reason;
+        if (exitStatus == QProcess::CrashExit) {
+            reason = QStringLiteral("Worker-Prozess abgestürzt");
+        } else if (exitCode != 0) {
+            reason = QStringLiteral("Worker beendet mit Code %1").arg(exitCode);
         } else {
-            args << QStringLiteral("--action") << QStringLiteral("upgrade");
+            reason = QStringLiteral("Worker endete ohne Abschlussmeldung");
         }
+        m_workerDoneEmitted = true;
+        emit eventEmitted(PhaseChanged{Phase::Failed, reason, false});
+        emit eventEmitted(TransactionDone{Result::Failed, reason, false, {}, 0});
+    });
 
-        const QString expected = !m_expectedRevision.isEmpty() ? m_expectedRevision : m_planRevision;
-        if (!expected.isEmpty()) {
-            args << QStringLiteral("--expected-fingerprint") << expected;
+    QStringList args;
+    args << QStringLiteral("--commit");
+    if (m_plannedAction == PlannedAction::Install) {
+        args << QStringLiteral("--action") << QStringLiteral("install");
+        if (!m_plannedTargets.isEmpty()) {
+            args << QStringLiteral("--install") << m_plannedTargets.join(QLatin1Char(','));
         }
-
-        m_process->start(workerExe, args);
+    } else if (m_plannedAction == PlannedAction::Remove) {
+        args << QStringLiteral("--action") << QStringLiteral("remove");
+        if (!m_plannedTargets.isEmpty()) {
+            args << QStringLiteral("--remove") << m_plannedTargets.join(QLatin1Char(','));
+        }
     } else {
-        // Fallback pacman
-        connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
-            while (m_process->canReadLine()) {
-                parsePacmanOutput(QString::fromUtf8(m_process->readLine()).trimmed());
-            }
-        });
-        connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, [this](int exitCode, QProcess::ExitStatus) {
-            if (exitCode == 0) {
-                emit eventEmitted(PhaseChanged{Phase::Cleanup, QStringLiteral("Aufräumen"), false});
-                emit eventEmitted(TransactionDone{Result::Success, QStringLiteral("System erfolgreich aktualisiert"), false, {}, 0});
-            } else {
-                emit eventEmitted(PhaseChanged{Phase::Failed, QStringLiteral("Fehlgeschlagen"), false});
-                emit eventEmitted(TransactionDone{Result::Failed, QStringLiteral("Pacman beendet mit Code %1").arg(exitCode), false, {}, 0});
-            }
-        });
-
-        m_process->start(QStringLiteral("pacman"), {QStringLiteral("-Syu"), QStringLiteral("--noconfirm")});
+        args << QStringLiteral("--action") << QStringLiteral("upgrade");
     }
+
+    if (!expected.isEmpty()) {
+        args << QStringLiteral("--expected-fingerprint") << expected;
+    }
+
+    m_process->start(workerExe, args);
 }
 
 void AlpmBackend::commitPlan(const QString &planRevision) {
@@ -391,7 +394,10 @@ void AlpmBackend::parseWorkerOutputLine(const QString &line) {
     if (doc.isObject()) {
         auto ev = deserializeEvent(doc.object());
         if (ev.has_value()) {
-            if (std::holds_alternative<TransactionDone>(*ev)) {
+            if (auto *ready = std::get_if<PlanReady>(&*ev)) {
+                m_plannedOps = ready->ops;
+                m_planRevision = ready->planRevision;
+            } else if (std::holds_alternative<TransactionDone>(*ev)) {
                 m_workerDoneEmitted = true;
             }
             emit eventEmitted(*ev);

@@ -12,7 +12,7 @@ private slots:
     void testDpkgStatusInstalledVsConfigFiles();
     void testHoldAndPinnedPolicy();
     void testProtectedPackagesBlocked();
-    void testCommitFingerprintMismatch();
+    void testCommitWithoutPlanIsRejected();
     void testCapabilities();
     void testFileProviders();
     void testReloadInvalidation();
@@ -57,7 +57,7 @@ void StoreAptCatalogTest::testAvailableOffersAndCandidatePolicy() {
     QVERIFY(offers.first().isCandidate);
     QCOMPARE(offers.first().packages.first().version, QStringLiteral("2.2.1-1"));
     QCOMPARE(offers.first().packages.first().arch, QStringLiteral("amd64"));
-    QCOMPARE(offers.first().packages.first().repoId, QStringLiteral("utils"));
+    QCOMPARE(offers.first().packages.first().repoId, QStringLiteral("trixie/main"));
     QCOMPARE(offers.first().downloadSize.value_or(0), 59392);
     QCOMPARE(offers.first().installedSize.value_or(0), 129 * 1024);
     QCOMPARE(offers.first().packages.first().backend, QStringLiteral("apt"));
@@ -220,21 +220,28 @@ void StoreAptCatalogTest::testProtectedPackagesBlocked() {
     QVERIFY(hasFailedDone);
 }
 
-void StoreAptCatalogTest::testCommitFingerprintMismatch() {
-    // TX-09 / APT-05: Commit mit abweichendem Fingerprint wird abgewiesen
+void StoreAptCatalogTest::testCommitWithoutPlanIsRejected() {
+    // Ohne vorher aufgelösten Plan bricht der Commit bereits am ersten Wächter ab.
+    // Dieser Fall sagt nichts über die Fingerprintprüfung aus - deshalb prüft der
+    // Test die konkrete Meldung und nicht bloß "irgendetwas ist fehlgeschlagen".
     lut::AptBackend backend;
-    bool hasMismatchFailed = false;
+    QString failureSummary;
     QObject::connect(&backend, &lut::Backend::eventEmitted, [&](const lut::Event &ev) {
         if (std::holds_alternative<lut::TransactionDone>(ev)) {
             const auto &done = std::get<lut::TransactionDone>(ev);
-            if (done.result == lut::Result::Failed) {
-                hasMismatchFailed = true;
+            if (done.result == lut::Result::Failed && failureSummary.isEmpty()) {
+                failureSummary = done.summary;
             }
         }
     });
 
     backend.commitPlan(QStringLiteral("sha256:invalidfingerprint1234567890"));
-    QVERIFY(hasMismatchFailed);
+    QVERIFY2(failureSummary.contains(QStringLiteral("Kein gültiger APT-Plan")),
+             qPrintable(failureSummary));
+
+    // Die eigentliche Revisionsbindung (APT-05 / TX-09) braucht einen echten
+    // aufgelösten Plan und wird deshalb in tests/integration/apt_integration.cpp
+    // gegen ein laufendes Debian-System geprüft, nicht hier.
 }
 
 void StoreAptCatalogTest::testCapabilities() {

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Linux Universal App Center
+GenericName=App Store & System Updater
+Comment=Discover and install applications, manage system updates with honest byte-weighted progress
+Exec=linux-universal-app-center
+Icon=org.linuxuniversalappcenter
+Terminal=false
+Type=Application
+Categories=Settings;PackageManager;
+Keywords=store;app;discover;update;upgrade;package;pacman;dnf;apt;
+StartupNotify=true

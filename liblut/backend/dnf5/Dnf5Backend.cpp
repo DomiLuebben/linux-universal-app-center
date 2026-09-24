@@ -37,6 +37,8 @@ QList<InstalledPackage> packages(const QByteArray &data) {
 }
 
 Dnf5Backend::Dnf5Backend(QObject *parent, const QString &program) : Backend(parent), m_program(program) {
+    m_process.setParent(this);
+    m_timeout.setParent(this);
     m_process.setProcessEnvironment(environment());
     m_process.setProcessChannelMode(QProcess::MergedChannels);
     m_timeout.setSingleShot(true);

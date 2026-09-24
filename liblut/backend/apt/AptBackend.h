@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QProcess>
+#include <QJsonArray>
+#include <QTemporaryDir>
 #include "liblut/backend/Backend.h"
 #include "StatusFdParser.h"
 
@@ -10,7 +12,7 @@ class AptBackend : public Backend {
     Q_OBJECT
 
 public:
-    explicit AptBackend(QObject *parent = nullptr);
+    explicit AptBackend(QObject *parent = nullptr, const QString &guardExecutable = QStringLiteral("/usr/libexec/linux-update-tool/lut-apt-guard"));
     ~AptBackend() override;
 
     Capabilities capabilities() const override;
@@ -38,6 +40,9 @@ public:
 private:
     void plan(const QStringList &arguments);
     void fail(const QString &message);
+    QString m_guardExecutable;
+    QJsonArray m_guardPlan;
+    std::unique_ptr<QTemporaryDir> m_guardDirectory;
     QStringList m_arguments;
     bool m_ready = false;
     bool m_running = false;

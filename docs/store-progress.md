@@ -709,3 +709,109 @@ Dieses Dokument begleitet die schrittweise Implementierung des Store-Plans für 
   - Keine Host-Paketmutationen durchgeführt.
 
 
+
+---
+
+## Nachtrag: Befunde aus dem externen Audit (22.09.2026)
+
+Ein Audit der Phasen P1–P8 gegen den Quelltext hat Lücken gezeigt, die von den
+bestehenden Tests nicht erfasst wurden. Die folgenden Korrekturen wurden danach
+vorgenommen. Jede ist durch einen Test abgedeckt, der ohne die Korrektur fehlschlägt.
+
+### Behoben
+
+| Befund | Korrektur | Nachweis |
+|---|---|---|
+| P3 hatte keinen echten Durchstich: der Commit-Test lief mit `--dry-run`, es wurde nie ein Paket wirklich installiert | `testStoreInstallAndRemoveRoundtrip` installiert ein echtes Paket unter `fakeroot` in einem Wegwerf-Root, prüft Dateien und lokale Datenbank, entfernt es und prüft erneut | `alpm_backend_test` |
+| Mehrpaket-Anwendungen wurden auf das erste Paket reduziert; CAT-06 hat genau diese Reduktion festgeschrieben | `AppRecord::packageNames` wird durchgereicht, `ApplicationStore::packageSet()` bildet den Installationssatz, `requestInstall`/`requestRemove` senden Listen; CAT-06 prüft jetzt den erzeugten Satz | `store_catalog_test` |
+| Kuratierte Sammlungen nannten Flathub-Kennungen; der Arch-Katalog führt `…​.desktop`. Alle vier Sammlungen wären auf dem Zielsystem leer geblieben, ohne dass etwas auffällt | `CatalogService::normalizedAppKey()` gleicht beide Schreibweisen ab; vier tatsächlich falsche Kennungen korrigiert; `scripts/verify-curated-ids.sh` prüft alle Kennungen gegen einen echten Distributionskatalog | `store_catalog_test`, `verify-curated-ids.sh` |
+| Es gab keine Vorschau mit Bestätigung: `commitStorePlan()` und `discardStorePlan()` wurden von keiner Stelle aufgerufen, ein Store-Klick endete nach der Planung | Neue Seite `qml/pages/PlanPreview.qml` mit Paketliste, Größen, Warnungen und Bestätigung gegen die angezeigte Planrevision | QML-Smoke, alle Seiten warnungsfrei |
+| Abschnitt 8.7 verlangt, betroffene Anwendungen zu nennen; `affectedApps` existierte als Feld, war aber nirgends implementiert (`setAffectedApps` war nicht einmal definiert) | `ApplicationStore::appsProvidedByPackages()` ermittelt sie, `DaemonClient::planReady` löst die Anreicherung aus, die Vorschau zeigt sie an | `store_catalog_test` (CAT-07) |
+| DNF5 leitete die Repository-Priorität aus dem Teilstring `updates` ab | Rangwerte stammen aus `dnf5 repo info --json` (`priority`, `cost`); ohne Angaben gilt die DNF5-Vorgabe und allein die EVR-Version entscheidet | `store_dnf5_catalog_test` |
+| Der Zustand „installiert, Quelle nicht mehr vorhanden" wurde nie erzeugt | `AppActionState::MissingSource` wird ermittelt und in der Detailseite benannt; Starten und Entfernen bleiben möglich, eine Neuinstallation wird nicht versprochen | `store_catalog_test` (CAT-09) |
+| `archlinux-appstream-data` fehlte in den Paketabhängigkeiten, obwohl Abschnitt 4.3 es verlangt | In `PKGBUILD` `depends` aufgenommen | — |
+| Die APT-Revisionsbindung war ungetestet: beide Tests liefen in den vorgelagerten Wächter „Kein gültiger APT-Plan vorhanden" und erreichten den Fingerprintvergleich nie | Der Integrationstest löst zuerst einen gültigen Plan auf, prüft dann die Abweisung der falschen Revision **an der Fingerprint-Meldung** und als Gegenprobe die Annahme der korrekten Revision | `apt_integration` |
+| `store_ui_test` erwartete `http` als sicheres Medienschema, obwohl `isSafeMediaUrl()` inzwischen HTTPS verlangt | Test an die Richtlinie aus Abschnitt 4.7 angeglichen | `store_ui_test` |
+
+### Nachtrag 2: Die verbliebenen Punkte
+
+Die oben als offen geführten Punkte wurden anschließend bearbeitet. Stand nach
+dieser Runde:
+
+| Punkt | Umsetzung | Nachweis |
+|---|---|---|
+| APT-Planbindung war eine Textheuristik ohne durchgehende Sperre | `lut-apt-guard` hängt sich über `DPkg::Pre-Install-Pkgs` (Protokoll 3) in den APT-Lauf. APT ruft ihn, während es `lock-frontend` hält, mit der tatsächlichen dpkg-Operationsliste und den echten `.deb`-Pfaden. Der Wächter vergleicht Operationsmenge, Versionen, Architektur, Entfernungs-Flag und die SHA-256-Summe jeder Paketdatei mit dem bestätigten Plan und bricht sonst ab. Er prüft zusätzlich, dass er als root läuft, dass die Sperre einem Vorfahrprozess gehört und dass die Plandatei root gehört. | `apt_guard_test`: ein Positivfall und sechs gezielte Verfälschungen (Version, Architektur, ausgetauschte Paketdatei, zusätzliche Operation, falsche Protokollversion, fehlende Operation), die alle abgewiesen werden müssen |
+| Medienlimits aus Abschnitt 4.7 fehlten | `MediaCache` mit 10 MiB je Bild, 16 Megapixel, 256 MiB Plattencache, drei Redirects, 15 s Zeitlimit, vier gleichzeitige Downloads | `store_media_test` |
+| Fünf Aktionszustände wurden nie erzeugt | Alle vierzehn Zustände der Matrix aus Abschnitt 7 werden jetzt ermittelt und von der Oberfläche aus einer Quelle gelesen | `store_catalog_test`, `store_bus_integration_test` |
+| P4 und P6 waren nicht end-to-end belegt | `store_bus_integration_test` startet einen eigenen Daemon-Prozess auf einer echten D-Bus-Sitzung und führt den Klickweg durch die tatsächlichen Seiten `AppDetails.qml` und `PlanPreview.qml`: Installieren, Vorschau, Bestätigen, Bestandsabgleich, Entfernen. Zusätzlich geprüft: Wiederanbinden nach GUI-Neustart während des Commits, genau ein Abschlussereignis, Abweisung eines zweiten Clients und einer falschen Planrevision | `store_bus_integration_test` |
+| Ein fehlgeschlagener Revisionsvergleich fiel auf einen ungebundenen Altpfad zurück | Dieser Rückfall ist entfernt; der Test prüft ausdrücklich, dass nach der Abweisung kein Commit stattfindet | `store_bus_integration_test` |
+| `lutd` blockierte beim Planen bis zu 60 Sekunden | Die Paketauflösung läuft in einem eigenen Arbeitsbereich; der Dienst antwortet währenddessen weiter | `store_bus_integration_test` misst `GetCapabilities` während einer 700 ms dauernden Auflösung gegen eine 300-ms-Grenze |
+| Katalogdurchlauf startete einen Unterprozess je Anwendung | Die Abfragen sind gebündelt und laufen abseits des GUI-Threads; die Oberfläche liest aus einem vorbereiteten Bestand | Debian-Container-Prüfstand |
+
+### Phase P11 — Repository-Verwaltung (Multi-Distro Paketquellen)
+
+- **Status:** Bestanden (22.09.2026)
+- **Auftrag:** Unter Einstellungen einen Unterpunkt für Repositories hinzufügen. Vorhandene Paketquellen anzeigen, umschalten und löschen; 1-Klick-Vorschläge für Pacman, DNF und APT bereitstellen.
+- **Umsetzung:**
+  - **`liblut/repository/RepoManager` & `RepoTypes`:** Universeller Parser und Verwalter für `/etc/pacman.conf` (Arch/CachyOS), `/etc/yum.repos.d/*.repo` (Fedora DNF5) und `/etc/apt/sources.list[.d]` (Debian/Ubuntu APT).
+  - **1-Klick-Presets:**
+    - Arch / CachyOS: `multilib` (32-Bit Libs für Wine/Steam) und `chaotic-aur` (vorkompiliertes AUR).
+    - Fedora: `rpmfusion-free`, `rpmfusion-nonfree`, `fedora-cisco-openh264`.
+    - Debian: `contrib`, `non-free`, `non-free-firmware`, `backports`.
+  - **Sicherheit & Schutz vor OS-Bruch:** Essenzielle System-Repositories (`core`, `extra`, `cachyos*`, `fedora`, `main`) tragen `isSystem = true`. Der Lösch-Knopf ist für diese gesperrt; Backend-seitig wird ein Löschen abgewiesen.
+  - **D-Bus & Polkit:** Neue Aktion `org.linuxupdatetool.manage-repositories` (`auth_admin_keep`) für autorisierte Dateiänderungen via `lutd`.
+  - **Oberfläche (`Settings.qml`):** Segmentierter Umschalter *Allgemein* | *Paketquellen*. 1-Klick-Karten mit Aktivierungs-/Löschfunktion, Liste konfigurierter Repositories mit Toggle und Löschen, Dialog für benutzerdefinierte Repositories. 100 % Plasma Theme-Palette (0 Hex-Farben).
+  - **Qualitätssicherung:** Neuer Unit-Test `tests/unit/repo_manager_test.cpp` mit isolierten Testfixtures für alle drei Paketmanager. 29/29 CTests bestanden, `scripts/verify-all.sh` grün.
+
+### Phase P12 — Paketauflösung für Bottles & AUR/AppStream ohne pkgname
+
+- **Status:** Bestanden (22.09.2026)
+- **Problem & Ursache:** Auf CachyOS / Arch mit `chaotic-aur` war `bottles` installiert, tauchte aber nicht unter „Installiert“ auf und zeigte auf der Detailseite „Aktion nicht unterstützt“. Ursache war die Upstream-Metadaten-Datei `/usr/share/metainfo/com.usebottles.bottles.metainfo.xml`, die keinen `<pkgname>`-Tag enthält, sodass `packageNames` leer blieb und kein Abgleich mit der ALPM-Datenbank stattfand.
+- **Umsetzung:**
+  - **`ApplicationStore::resolvePackageNamesForApps()`**: Asynchrone Paketauflösung im Worker-Thread von `buildSnapshot()`. Ermittelt den nativen Paketnamen über Dateibesitzerprüfung von Desktop-Dateien (`findPackagesProvidingFile("/usr/share/applications/...")`), Metainfofiles sowie Reverse-DNS-Namensheuristiken (`com.usebottles.bottles` $\rightarrow$ `bottles`).
+  - **`CatalogService::setPackageNamesForApp()`**: Dynamische Aktualisierung der internen Nachschlagetabellen (`m_appsByKey`, `m_appsByPackage`), sodass auch Rückwärtssuchen (`appByPackageName("bottles")`) funktionieren.
+  - **Qualitätssicherung:** Unit-Test `testReverseDnsInstalledResolution` (synthetisch) und `testRealHostBottlesDetection` (auf echtem CachyOS-Host mit echter ALPM-Datenbank) in `tests/unit/store_installed_test.cpp`. 29/29 CTests bestanden, `scripts/verify-all.sh` grün.
+- **Paketierung:** Arch-Paket `linux-app-store-1.1.0-1-x86_64.pkg.tar.zst` mit `makepkg -f` neu gebaut und nach `~/Projekte/releases/` kopiert.
+
+### Weiterhin offen
+
+- **Ubuntu ist nicht geprüft.** Belegt ist Debian 13. Abschnitt 1.3 verlangt,
+  die tatsächlich geprüften Distributionen zu benennen; „Ubuntu unterstützt"
+  wäre ohne eigenen Lauf nicht gedeckt.
+- **Die Leistungszahlen aus Abschnitt 10.5 sind nicht gemessen.** Der
+  Katalogdurchlauf blockiert die Oberfläche nicht mehr, aber Such-, Start- und
+  Scrollzeiten wurden nicht mit dokumentierter Datenmenge erhoben.
+- **Die Sichtprüfung aus Phase P9** (Skalierung 100/150/200 %, helle und dunkle
+  Systemfarben, reduzierte Bewegung, lange deutsche Texte) steht aus. Der
+  Bus-Test legt einen Screenshot der Vorschau ab, ersetzt aber keine
+  Sichtprüfung der übrigen Bildschirmzustände.
+
+
+---
+
+## Nachtrag 3: Audit der Paketquellen-Verwaltung (22.09.2026)
+
+Nach der Umbenennung auf `linux-app-store` und der neu ergänzten
+Repository-Verwaltung wurden vier Befunde behoben. Jeder ist durch einen Test
+abgedeckt, der ohne die Korrektur fehlschlägt (per Mutation nachgewiesen).
+
+| Befund | Korrektur | Test |
+|---|---|---|
+| Adresse und Anzeigename einer Paketquelle wurden ungeprüft als root in `pacman.conf`, `*.repo` und `*.list` geschrieben. Ein Zeilenumbruch genügte, um weitere Direktiven einzuschleusen, etwa `SigLevel = Never` oder eine zweite Paketquelle. | `isSafeConfigValue()` weist Steuerzeichen und überlange Werte zentral in `addRepository()` ab | `testConfigValuesRejectControlCharacters`, `testInjectedServerLineIsRejected` |
+| `Include =` wurde gesetzt, sobald die Adresse irgendwo „mirrorlist" enthielt — damit ließ sich eine beliebige Datei in die `pacman.conf` einbinden | `isAllowedPacmanInclude()` lässt nur Dateien direkt unterhalb `/etc/pacman.d/` zu | `testIncludeOnlyFromPacmanDirectory` |
+| `[trusted=yes]` ließ sich in eine APT-Quelle schreiben und schaltete dort die Signaturprüfung ab | Optionen in eckigen Klammern werden abgewiesen | `testAptSourceRejectsTrustedOption` |
+| `safeWriteFile()` löschte die Zieldatei und benannte erst danach um. Ein Abbruch dazwischen hinterließ das System ohne `pacman.conf`. | `fsync` auf Datei und Verzeichnis, `rename()` über die bestehende Datei, Rechte explizit gesetzt | `testExistingConfigSurvivesReplacement` |
+
+Zusätzlich korrigiert:
+
+- **Namensableitung nur noch für den Bestand.** Die Reverse-DNS-Heuristik glich
+  auch gegen verfügbare Repository-Angebote ab. Für eine Komponente ohne
+  `<pkgname>` wurde dadurch ein gleichnamiges, unbeteiligtes Paket zum
+  Installationsziel — Abschnitt 4.5 Punkt 8 und 9 verbieten das. Punkt 10
+  erlaubt die Ableitung ausdrücklich nur für bereits installierte Anwendungen.
+  Gegenprobe: `testReverseDnsNeverInventsInstallTarget`.
+- **Chaotic-AUR** nennt jetzt in der Beschreibung, dass `chaotic-keyring`
+  nötig ist. Signaturschlüssel werden weiterhin nicht automatisch importiert.
+
+Prüfstand nach den Korrekturen: Host 29/29 und `verify-all.sh` vollständig grün,
+Debian 13 25/25, Fedora 44 25/25, `makepkg`-`check()` 29/29.

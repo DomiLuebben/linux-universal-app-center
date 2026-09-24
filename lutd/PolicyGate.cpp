@@ -12,6 +12,8 @@ const QString PolicyGate::ActionUpgrade = QStringLiteral("org.linuxupdatetool.up
 const QString PolicyGate::ActionInstall = QStringLiteral("org.linuxupdatetool.install");
 const QString PolicyGate::ActionRemove = QStringLiteral("org.linuxupdatetool.remove");
 const QString PolicyGate::ActionManageOthers = QStringLiteral("org.linuxupdatetool.manage-others");
+const QString PolicyGate::ActionManageRepositories = QStringLiteral("org.linuxupdatetool.manage-repositories");
+const QString PolicyGate::ActionPacstall = QStringLiteral("org.linuxupdatetool.pacstall");
 
 PolicyGate::PolicyGate(QObject *parent)
     : QObject(parent) {}

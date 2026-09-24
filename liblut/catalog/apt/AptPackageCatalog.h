@@ -25,6 +25,7 @@ public:
     QList<PackageOffer> searchPackages(const QString &query) override;
     int compareVersions(const QString &v1, const QString &v2) const override;
     void reload() override;
+    void prepareSnapshot(const QStringList &names) override;
 
     // Öffentliche statische Parser-Methoden für isolierte Unit-Tests
     static QString parsePolicyCandidate(const QString &policyOutput);
@@ -40,6 +41,7 @@ private:
     QString m_aptCacheProgram;
     QString m_dpkgQueryProgram;
     mutable QMutex m_mutex;
+    std::optional<QList<InstalledPackage>> m_inventory;
     mutable quint64 m_generation = 1;
     mutable QMap<QString, QList<PackageOffer>> m_offersCache;
     mutable QMap<QString, InstalledState> m_installedCache;

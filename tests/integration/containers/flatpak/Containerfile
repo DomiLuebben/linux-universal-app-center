@@ -1,0 +1,24 @@
+FROM archlinux:latest
+
+# Arch, weil Flatpak dort gegen dieselbe Qt-Fassung gebaut wird wie auf dem Zielsystem.
+# flatpak bringt bubblewrap mit; der Container muss deshalb privilegiert laufen.
+RUN pacman -Syu --noconfirm && pacman -S --noconfirm \
+    base-devel \
+    cmake \
+    qt6-base \
+    qt6-declarative \
+    qt6-svg \
+    polkit-qt6 \
+    sqlite \
+    pacman-contrib \
+    appstream \
+    appstream-qt \
+    kirigami \
+    kservice \
+    kio \
+    dbus \
+    flatpak \
+    && pacman -Scc --noconfirm
+
+WORKDIR /app
+ENV QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 LANG=C.UTF-8

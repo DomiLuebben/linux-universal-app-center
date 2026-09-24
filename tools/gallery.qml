@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import "../linux-update-tool/qml/components"
+import "../linux-app-store/qml/components"
 
 ApplicationWindow {
     id: root

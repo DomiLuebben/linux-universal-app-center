@@ -3,7 +3,7 @@
 namespace lut {
 
 QString versionString() {
-    return QStringLiteral("1.1.0");
+    return QStringLiteral(LUT_VERSION);
 }
 
 } // namespace lut

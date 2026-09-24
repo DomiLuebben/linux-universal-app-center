@@ -1,5 +1,5 @@
 #include <QTest>
-#include "linux-update-tool/theme/Contrast.h"
+#include "linux-app-store/theme/Contrast.h"
 
 class ThemeContrastTest : public QObject {
     Q_OBJECT

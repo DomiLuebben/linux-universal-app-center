@@ -6,6 +6,11 @@
 #include <QFile>
 #include <QMap>
 #include <QSet>
+#include <QJsonDocument>
+#include <QCryptographicHash>
+#include <QSaveFile>
+#include <QFileInfo>
+#include <QDir>
 
 namespace lut {
 namespace {
@@ -35,9 +40,19 @@ bool run(const QString &program, const QStringList &args, QByteArray &out, QStri
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
+static const QRegularExpression &installRegex() {
+    static const QRegularExpression regex(QStringLiteral(R"(^Inst\s+(\S+)(?:\s+\[([^\]]+)\])?\s+\((\S+)\s+(.+)\s+\[([^\]]+)\]\))"));
+    return regex;
+}
+
+static const QRegularExpression &removeRegex() {
+    static const QRegularExpression regex(QStringLiteral(R"(^Remv\s+(\S+)\s+\[([^\]]+)\])"));
+    return regex;
+}
+
 } // namespace
 
-AptBackend::AptBackend(QObject *parent) : Backend(parent) {}
+AptBackend::AptBackend(QObject *parent, const QString &guardExecutable) : Backend(parent), m_guardExecutable(guardExecutable) {}
 
 AptBackend::~AptBackend() {
     // Let an active dpkg operation finish rather than killing it mid-transaction.
@@ -179,6 +194,7 @@ void AptBackend::plan(const QStringList &arguments) {
     m_ready = false;
     m_plannedOps.clear();
     m_arguments.clear();
+    m_guardPlan = {};
     emit eventEmitted(PhaseChanged{Phase::Resolve, QStringLiteral("APT-Transaktion und Paketgrößen ermitteln"), false, true});
 
     QByteArray output;
@@ -189,15 +205,12 @@ void AptBackend::plan(const QStringList &arguments) {
     }
 
     const auto installed = installedPackages();
-    static const QRegularExpression install(QStringLiteral(R"(^Inst\s+(\S+)(?:\s+\[([^\]]+)\])?\s+\((\S+)\s+(.+)\s+\[([^\]]+)\]\))"));
-    static const QRegularExpression remove(QStringLiteral(R"(^Remv\s+(\S+)\s+\[([^\]]+)\])"));
-
     PlanReady plan;
     QStringList specs{QStringLiteral("show")};
 
     for (const auto &line : QString::fromUtf8(output).split(QLatin1Char('\n'))) {
-        auto match = install.match(line);
-        auto removed = remove.match(line);
+        auto match = installRegex().match(line);
+        auto removed = removeRegex().match(line);
         if (!match.hasMatch() && !removed.hasMatch()) {
             if (line.startsWith(QLatin1String("Inst ")) || line.startsWith(QLatin1String("Remv "))) {
                 fail(QStringLiteral("Unbekanntes APT-Planformat: %1").arg(line));
@@ -254,11 +267,13 @@ void AptBackend::plan(const QStringList &arguments) {
     }
 
     for (auto &op : plan.ops) {
+        QString digest;
         if (op.kind != PackageOp::Kind::Remove) {
             bool found = false;
             for (const auto &item : metadata) {
                 if (item.name == op.name && item.version == op.newVersion && (item.arch == op.arch || item.arch == QLatin1String("all"))) {
                     if (item.downloadSize < 0 || item.installedSize < 0) continue;
+                    digest = item.sha256;
                     op.downloadSize = item.downloadSize;
                     op.installedSize = item.installedSize;
                     op.installedSizeDelta = op.installedSizeDelta.value_or(0) + item.installedSize;
@@ -267,11 +282,18 @@ void AptBackend::plan(const QStringList &arguments) {
                     break;
                 }
             }
-            if (!found) {
+            if (!found || digest.size() != 64) {
                 fail(QStringLiteral("Keine verlässlichen Größen für %1 verfügbar.").arg(op.id));
                 return;
             }
         }
+        QString oldArch;
+        for (const auto &pkg : installed) {
+            if (pkg.name == op.name && pkg.version == op.version && (pkg.arch == op.arch || pkg.arch == QLatin1String("all"))) oldArch = pkg.arch;
+        }
+        m_guardPlan.append(QJsonObject{{"name", op.name}, {"arch", op.arch}, {"oldArch", oldArch},
+            {"oldVersion", op.version}, {"newVersion", op.newVersion}, {"sha256", digest},
+            {"remove", op.kind == PackageOp::Kind::Remove}});
         plan.downloadBytes += op.downloadSize;
         plan.installedSizeDelta += op.installedSizeDelta.value_or(0);
     }
@@ -280,7 +302,8 @@ void AptBackend::plan(const QStringList &arguments) {
     txPlan.downloadBytes = plan.downloadBytes;
     txPlan.installedSizeDelta = plan.installedSizeDelta;
     txPlan.ops = plan.ops;
-    txPlan.planRevision = txPlan.calculateFingerprint();
+    txPlan.planRevision = QString::fromLatin1(QCryptographicHash::hash(txPlan.calculateFingerprint().toUtf8()
+        + QJsonDocument(m_guardPlan).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
     m_currentPlan = txPlan;
     plan.planRevision = txPlan.planRevision;
 
@@ -311,42 +334,21 @@ void AptBackend::commitPlan(const QString &expectedPlanRevision) {
         return;
     }
 
-    // 1. Audit-Prüfung nach APT-06: Verhindere Ausführung bei unvollständigem / defektem Dpkg-Zustand
-    QByteArray auditOut;
-    QString auditErr;
-    if (run(QStringLiteral("/usr/bin/dpkg"), {QStringLiteral("--audit")}, auditOut, auditErr)) {
-        if (!auditOut.trimmed().isEmpty()) {
-            fail(QStringLiteral("Das Paketsystem ist in einem unvollständigen Zustand. Bitte führen Sie 'dpkg --configure -a' aus:\n%1")
-                 .arg(QString::fromUtf8(auditOut).trimmed()));
-            return;
-        }
-    }
-
-    // 2. Pre-Commit Simulation-Verifikation nach APT-05:
-    //    Stellt sicher, dass zwischen Vorschau und Ausführung keine System- oder Repo-Änderung stattfand
-    QByteArray simOut;
-    QString simErr;
-    if (!run(QStringLiteral("/usr/bin/apt-get"), QStringList{QStringLiteral("--simulate")} + m_arguments, simOut, simErr)) {
-        fail(QStringLiteral("Überprüfung des Plans vor Ausführung fehlgeschlagen: %1").arg(simErr));
+    // The native APT process invokes the guard while holding lock-frontend and
+    // before the first dpkg change. No second simulation / unlocked comparison.
+    if (!QFileInfo(m_guardExecutable).isExecutable() || !m_guardExecutable.startsWith(QLatin1Char('/'))
+        || !QRegularExpression(QStringLiteral("^/[A-Za-z0-9_./-]+$")).match(m_guardExecutable).hasMatch()) {
+        fail(QStringLiteral("APT-Planprüfer fehlt oder sein Pfad ist ungültig."));
         return;
     }
-
-    static const QRegularExpression opRegex(QStringLiteral(R"(^(Inst|Remv)\s+(\S+))"));
-    QStringList simOps;
-    for (const auto &line : QString::fromUtf8(simOut).split(QLatin1Char('\n'))) {
-        auto m = opRegex.match(line);
-        if (m.hasMatch()) {
-            simOps.append(m.captured(1) + QLatin1Char(':') + m.captured(2).section(QLatin1Char(':'), 0, 0));
-        }
-    }
-    QStringList expectedOps;
-    for (const auto &op : m_plannedOps) {
-        expectedOps.append((op.kind == PackageOp::Kind::Remove ? QStringLiteral("Remv:") : QStringLiteral("Inst:")) + op.name);
-    }
-    if (simOps != expectedOps) {
-        fail(QStringLiteral("Der Zustand des Paketsystems oder der Repositories hat sich seit der Vorschau geändert. Bitte neu planen."));
-        return;
-    }
+    m_guardDirectory = std::make_unique<QTemporaryDir>(QDir::tempPath() + QStringLiteral("/lut-apt-plan-XXXXXX"));
+    if (!m_guardDirectory->isValid()) { fail(QStringLiteral("APT-Planverzeichnis konnte nicht angelegt werden.")); return; }
+    const QString planPath = m_guardDirectory->filePath(QStringLiteral("approved.json"));
+    QSaveFile file(planPath);
+    const QByteArray payload = QJsonDocument(m_guardPlan).toJson(QJsonDocument::Compact);
+    if (!file.open(QIODevice::WriteOnly)) { fail(file.errorString()); return; }
+    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+    if (file.write(payload) != payload.size() || !file.commit()) { fail(file.errorString()); return; }
 
     if (!m_process) {
         m_process = new QProcess(this);
@@ -367,7 +369,8 @@ void AptBackend::commitPlan(const QString &expectedPlanRevision) {
         });
         connect(m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
             m_running = false;
-            if (status != QProcess::NormalExit || code != 0) {
+            if (status != QProcess::NormalExit || code != 0 || !m_guardDirectory
+                || !QFile::exists(m_guardDirectory->filePath(QStringLiteral("approved.json.verified")))) {
                 fail(QStringLiteral("APT fehlgeschlagen (Code %1), Details im Protokoll.").arg(code));
                 return;
             }
@@ -388,7 +391,13 @@ void AptBackend::commitPlan(const QString &expectedPlanRevision) {
         QStringLiteral("-o"), QStringLiteral("Dpkg::Options::=--force-confold"),
         QStringLiteral("-y")
     };
+    commitArgs << QStringLiteral("-o") << QStringLiteral("DPkg::Pre-Install-Pkgs::=%1").arg(m_guardExecutable)
+               << QStringLiteral("-o") << QStringLiteral("DPkg::Tools::Options::%1::Version=3").arg(m_guardExecutable)
+               << QStringLiteral("-o") << QStringLiteral("DPkg::Tools::Options::%1::InfoFD=0").arg(m_guardExecutable);
     commitArgs.append(m_arguments);
+    auto env = environment();
+    env.insert(QStringLiteral("LUT_APT_PLAN_FILE"), planPath);
+    m_process->setProcessEnvironment(env);
 
     m_process->start(QStringLiteral("/usr/bin/apt-get"), commitArgs);
     m_process->closeWriteChannel();

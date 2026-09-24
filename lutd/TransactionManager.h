@@ -4,10 +4,14 @@
 #include <QDBusContext>
 #include <QDBusObjectPath>
 #include <QTimer>
+#include <QThread>
 #include <memory>
 #include "PolicyGate.h"
 #include "Inhibitor.h"
 #include "liblut/backend/Backend.h"
+#include "liblut/backend/flatpak/FlatpakBackend.h"
+#include "liblut/backend/snap/SnapBackend.h"
+#include "liblut/backend/pacstall/PacstallBackend.h"
 #include "liblut/progress/ProgressModel.h"
 #include "liblut/transaction/TransactionTypes.h"
 
@@ -22,7 +26,10 @@ public:
     ~TransactionManager() override;
 
     bool init();
-    void setBackendForTest(std::unique_ptr<Backend> backend);
+    void setBackendForTest(std::unique_ptr<Backend> backend, bool threaded = false);
+    void setFlatpakBackendForTest(std::unique_ptr<FlatpakBackend> backend);
+    void setSnapBackendForTest(std::unique_ptr<SnapBackend> backend);
+    void setPacstallBackendForTest(std::unique_ptr<PacstallBackend> backend);
     void setCallerUidForTest(quint32 uid);
     quint32 callerUidForTest() const { return m_ownerUid.value_or(0); }
     quint64 sequenceCounter() const { return m_sequenceCounter; }
@@ -37,6 +44,8 @@ public slots:
     QDBusObjectPath PlanDnf5(const QString &command, const QStringList &arguments, const QVariantMap &options);
     QDBusObjectPath CleanCache();
     QDBusObjectPath PlanPackageTransaction(const QString &action, const QVariantList &targets, const QVariantMap &options);
+    QString PacstallCheck();
+    QDBusObjectPath PlanPacstallUpgrade(const QStringList &names);
     QString GetTransactionSnapshot(const QDBusObjectPath &transactionPath);
     void Commit(const QDBusObjectPath &transactionPath);
     void CommitPlan(const QDBusObjectPath &transactionPath, const QString &planRevision);
@@ -47,15 +56,27 @@ public slots:
     QList<QDBusObjectPath> GetActiveTransactions();
     QStringList GetEventHistory(const QDBusObjectPath &transactionPath);
 
+    // Repository Management
+    QString GetRepositories();
+    QString GetRepositoryPresets();
+    bool AddRepository(const QString &repoJson);
+    bool AddRepositoryPreset(const QString &presetId);
+    bool RemoveRepository(const QString &repoId);
+    bool ToggleRepository(const QString &repoId, bool enabled);
+
 signals:
     // D-Bus Signal
     void TransactionEvent(const QDBusObjectPath &transactionPath, const QString &eventJson);
+
+protected:
+    virtual bool authorize(const QString &action, const QString &service);
 
 private slots:
     void onBackendEvent(const lut::Event &event);
     void onIdleTimeout();
 
 private:
+    void startBackendThread();
     void resetIdleTimer();
     void registerNewTransaction();
     bool beginAuthorized(const QString &action);
@@ -66,6 +87,14 @@ private:
     PolicyGate m_policyGate;
     Inhibitor m_inhibitor;
     std::unique_ptr<Backend> m_backend;
+    std::unique_ptr<FlatpakBackend> m_flatpakBackend;
+    std::unique_ptr<SnapBackend> m_snapBackend;
+    std::unique_ptr<PacstallBackend> m_pacstallBackend;
+    PacstallBackend *ensurePacstallBackend();
+    int m_pendingPacstallChecks = 0; // hält den Daemon wach, solange -Lu läuft
+    Backend *m_activeBackend = nullptr;
+    QThread m_backendThread;
+    Capabilities m_capabilities;
     ProgressModel m_progressModel;
 
     QTimer m_idleTimer;

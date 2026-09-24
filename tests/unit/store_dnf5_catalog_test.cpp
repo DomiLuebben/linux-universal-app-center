@@ -11,6 +11,9 @@ class StoreDnf5CatalogTest : public QObject {
 private slots:
     void testParseAvailableOffers();
     void testMultiOfferCandidateSelection();
+    void testEvrPriorityOverRepoName();
+    void testRepoScoresFromNativeConfig();
+    void testConfiguredRepoPriorityBreaksEvrTie();
     void testParseInstalledState();
     void testParseFileProviders();
     void testParseInstalledPackagesWithOrphans();
@@ -38,7 +41,10 @@ void StoreDnf5CatalogTest::testParseAvailableOffers() {
     QCOMPARE(offer.installedSize.value_or(0), 122910);
     QVERIFY(offer.available);
     QVERIFY(offer.isCandidate);
-    QCOMPARE(offer.priority, 100);
+    // Ohne Repository-Angaben gilt die DNF5-Vorgabe, nicht ein geratener Wert.
+    QCOMPARE(offer.priority, Dnf5PackageCatalog::repoScore(
+                                 Dnf5PackageCatalog::kDefaultRepoPriority,
+                                 Dnf5PackageCatalog::kDefaultRepoCost));
 }
 
 void StoreDnf5CatalogTest::testMultiOfferCandidateSelection() {
@@ -52,15 +58,90 @@ void StoreDnf5CatalogTest::testMultiOfferCandidateSelection() {
     auto offers = Dnf5PackageCatalog::parseAvailableOffers(sampleData);
     QCOMPARE(offers.size(), 2);
 
-    // Updates-Repo (Priorität 110) muss an erster Stelle stehen und Kandidat sein
+    // Die höhere EVR-Version gewinnt. Ohne Repository-Angaben tragen beide
+    // Angebote den DNF5-Vorgabewert, der Repository-Name entscheidet nichts.
     QCOMPARE(offers[0].packages.first().repoId, QStringLiteral("updates"));
     QCOMPARE(offers[0].packages.first().version, QStringLiteral("1.4.1-1.fc44"));
-    QCOMPARE(offers[0].priority, 110);
     QVERIFY(offers[0].isCandidate);
 
-    // Fedora-Repo (Priorität 100) darf kein Kandidat sein
     QCOMPARE(offers[1].packages.first().repoId, QStringLiteral("fedora"));
-    QCOMPARE(offers[1].priority, 100);
+    QVERIFY(!offers[1].isCandidate);
+
+    const int defaultScore = Dnf5PackageCatalog::repoScore(
+        Dnf5PackageCatalog::kDefaultRepoPriority, Dnf5PackageCatalog::kDefaultRepoCost);
+    QCOMPARE(offers[0].priority, defaultScore);
+    QCOMPARE(offers[1].priority, defaultScore);
+}
+
+void StoreDnf5CatalogTest::testRepoScoresFromNativeConfig() {
+    // Rangwerte stammen aus `dnf5 repo info --json`, nicht aus dem Repository-Namen.
+    const QByteArray repoInfo = R"([
+      {"id":"fedora","priority":99,"cost":1000},
+      {"id":"updates","priority":99,"cost":1000},
+      {"id":"hauseigen","priority":10,"cost":1000},
+      {"id":"langsam","priority":99,"cost":2000}
+    ])";
+
+    const auto scores = Dnf5PackageCatalog::parseRepoScores(repoInfo);
+    QCOMPARE(scores.size(), 4);
+
+    // Niedrigere priority gewinnt, bei Gleichstand die niedrigere cost.
+    QVERIFY(scores.value(QStringLiteral("hauseigen")) > scores.value(QStringLiteral("fedora")));
+    QCOMPARE(scores.value(QStringLiteral("fedora")), scores.value(QStringLiteral("updates")));
+    QVERIFY(scores.value(QStringLiteral("langsam")) < scores.value(QStringLiteral("fedora")));
+
+    // Unbrauchbare Eingaben dürfen nicht zu erfundenen Rangwerten führen.
+    QVERIFY(Dnf5PackageCatalog::parseRepoScores(QByteArray("kein json")).isEmpty());
+    QVERIFY(Dnf5PackageCatalog::parseRepoScores(QByteArray()).isEmpty());
+}
+
+void StoreDnf5CatalogTest::testConfiguredRepoPriorityBreaksEvrTie() {
+    // Gleiche EVR in zwei Repositories: jetzt entscheidet die konfigurierte
+    // Priorität. Der Name "updates" allein darf nichts mehr bewirken.
+    QByteArray sampleData =
+        "app\x1f" "0\x1f" "1.0.0\x1f" "1.fc44\x1f" "1.0.0-1.fc44\x1f" "x86_64\x1f"
+        "1000\x1f" "2000\x1f" "updates\x1f" "Sample App\x1e"
+        "app\x1f" "0\x1f" "1.0.0\x1f" "1.fc44\x1f" "1.0.0-1.fc44\x1f" "x86_64\x1f"
+        "1000\x1f" "2000\x1f" "hauseigen\x1f" "Sample App\x1e";
+
+    const QByteArray repoInfo = R"([
+      {"id":"updates","priority":99,"cost":1000},
+      {"id":"hauseigen","priority":10,"cost":1000}
+    ])";
+
+    auto offers = Dnf5PackageCatalog::parseAvailableOffers(
+        sampleData, Dnf5PackageCatalog::parseRepoScores(repoInfo));
+    QCOMPARE(offers.size(), 2);
+    QCOMPARE(offers[0].packages.first().repoId, QStringLiteral("hauseigen"));
+    QVERIFY(offers[0].isCandidate);
+    QVERIFY(!offers[1].isCandidate);
+
+    // Gegenprobe: ohne Repository-Angaben darf sich die Reihenfolge nicht
+    // plötzlich am Namen "updates" orientieren.
+    auto neutral = Dnf5PackageCatalog::parseAvailableOffers(sampleData, {});
+    QCOMPARE(neutral.size(), 2);
+    QCOMPARE(neutral[0].priority, neutral[1].priority);
+}
+
+void StoreDnf5CatalogTest::testEvrPriorityOverRepoName() {
+    // Höhere EVR-Version (2.0.0) aus regulärem Repo 'fedora' muss Vorrang haben
+    // vor älterer Version (1.9.0) aus 'updates'
+    QByteArray sampleData =
+        "app\x1f" "0\x1f" "1.9.0\x1f" "1.fc44\x1f" "1.9.0-1.fc44\x1f" "x86_64\x1f"
+        "1000\x1f" "2000\x1f" "updates\x1f" "Sample App\x1e"
+        "app\x1f" "0\x1f" "2.0.0\x1f" "1.fc44\x1f" "2.0.0-1.fc44\x1f" "x86_64\x1f"
+        "1200\x1f" "2400\x1f" "fedora\x1f" "Sample App\x1e";
+
+    auto offers = Dnf5PackageCatalog::parseAvailableOffers(sampleData);
+    QCOMPARE(offers.size(), 2);
+
+    // 2.0.0-1.fc44 aus fedora muss an erster Stelle stehen, weil EVR 2.0.0 > 1.9.0
+    QCOMPARE(offers[0].packages.first().version, QStringLiteral("2.0.0-1.fc44"));
+    QCOMPARE(offers[0].packages.first().repoId, QStringLiteral("fedora"));
+    QVERIFY(offers[0].isCandidate);
+
+    QCOMPARE(offers[1].packages.first().version, QStringLiteral("1.9.0-1.fc44"));
+    QCOMPARE(offers[1].packages.first().repoId, QStringLiteral("updates"));
     QVERIFY(!offers[1].isCandidate);
 }
 

@@ -2,10 +2,12 @@
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusMessage>
+#include <QDBusArgument>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <unistd.h>
+#include <limits>
 #include "liblut/backend/Validation.h"
 #include <QCoreApplication>
 #include <QDebug>
@@ -13,6 +15,7 @@
 #include "liblut/backend/dnf5/Dnf5Backend.h"
 #include "liblut/backend/alpm/AlpmBackend.h"
 #include "liblut/backend/apt/AptBackend.h"
+#include "liblut/repository/RepoManager.h"
 
 namespace lut {
 
@@ -25,6 +28,20 @@ TransactionManager::TransactionManager(QObject *parent)
 
 TransactionManager::~TransactionManager() {
     m_inhibitor.releaseLock();
+    if (m_backendThread.isRunning()) {
+        auto *backend = m_backend.release();
+        auto *flatpakBackend = m_flatpakBackend.release();
+        auto *snapBackend = m_snapBackend.release();
+        auto *pacstallBackend = m_pacstallBackend.release();
+        QMetaObject::invokeMethod(backend, [backend, flatpakBackend, snapBackend, pacstallBackend] {
+            delete backend;
+            delete flatpakBackend;
+            delete snapBackend;
+            delete pacstallBackend;
+        }, Qt::BlockingQueuedConnection);
+        m_backendThread.quit();
+        m_backendThread.wait();
+    }
 }
 
 bool TransactionManager::init() {
@@ -35,16 +52,138 @@ bool TransactionManager::init() {
     connect(m_backend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
     connect(m_backend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
 
+    if (FlatpakBackend::isFlatpakAvailable()) {
+        m_flatpakBackend = std::make_unique<FlatpakBackend>();
+        connect(m_flatpakBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_flatpakBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+    }
+
+    if (SnapBackend::isSnapAvailable()) {
+        m_snapBackend = std::make_unique<SnapBackend>();
+        connect(m_snapBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_snapBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+    }
+
+    if (PacstallBackend::isPacstallAvailable()) {
+        m_pacstallBackend = std::make_unique<PacstallBackend>();
+        connect(m_pacstallBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_pacstallBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+    }
+
+    startBackendThread();
     resetIdleTimer();
     return true;
 }
 
-void TransactionManager::setBackendForTest(std::unique_ptr<Backend> backend) {
+void TransactionManager::setBackendForTest(std::unique_ptr<Backend> backend, bool threaded) {
     m_backend = std::move(backend);
+    if (m_backend) m_capabilities = m_backend->capabilities();
     if (m_backend) {
         connect(m_backend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
         connect(m_backend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+        if (threaded) startBackendThread();
     }
+}
+
+void TransactionManager::setFlatpakBackendForTest(std::unique_ptr<FlatpakBackend> backend) {
+    m_flatpakBackend = std::move(backend);
+    if (m_flatpakBackend) {
+        connect(m_flatpakBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_flatpakBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+        for (const auto &src : m_flatpakBackend->capabilities().sources) {
+            bool found = false;
+            for (const auto &existing : m_capabilities.sources) {
+                if (existing.source == src.source) { found = true; break; }
+            }
+            if (!found) {
+                m_capabilities.sources.append(src);
+            }
+        }
+    }
+}
+
+void TransactionManager::setSnapBackendForTest(std::unique_ptr<SnapBackend> backend) {
+    m_snapBackend = std::move(backend);
+    if (m_snapBackend) {
+        connect(m_snapBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_snapBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+        for (const auto &src : m_snapBackend->capabilities().sources) {
+            bool found = false;
+            for (const auto &existing : m_capabilities.sources) {
+                if (existing.source == src.source) { found = true; break; }
+            }
+            if (!found) {
+                m_capabilities.sources.append(src);
+            }
+        }
+    }
+}
+
+void TransactionManager::setPacstallBackendForTest(std::unique_ptr<PacstallBackend> backend) {
+    m_pacstallBackend = std::move(backend);
+    if (m_pacstallBackend) {
+        connect(m_pacstallBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_pacstallBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+        for (const auto &src : m_pacstallBackend->capabilities().sources) {
+            bool found = false;
+            for (const auto &existing : m_capabilities.sources) {
+                if (existing.source == src.source) { found = true; break; }
+            }
+            if (!found) {
+                m_capabilities.sources.append(src);
+            }
+        }
+    }
+}
+
+void TransactionManager::startBackendThread() {
+    m_capabilities = m_backend->capabilities();
+    if (m_flatpakBackend) {
+        for (const auto &src : m_flatpakBackend->capabilities().sources) {
+            bool found = false;
+            for (const auto &existing : m_capabilities.sources) {
+                if (existing.source == src.source) { found = true; break; }
+            }
+            if (!found) {
+                m_capabilities.sources.append(src);
+            }
+        }
+    }
+    if (m_snapBackend) {
+        for (const auto &src : m_snapBackend->capabilities().sources) {
+            bool found = false;
+            for (const auto &existing : m_capabilities.sources) {
+                if (existing.source == src.source) { found = true; break; }
+            }
+            if (!found) {
+                m_capabilities.sources.append(src);
+            }
+        }
+    }
+    if (m_pacstallBackend) {
+        for (const auto &src : m_pacstallBackend->capabilities().sources) {
+            bool found = false;
+            for (const auto &existing : m_capabilities.sources) {
+                if (existing.source == src.source) { found = true; break; }
+            }
+            if (!found) {
+                m_capabilities.sources.append(src);
+            }
+        }
+    }
+    qRegisterMetaType<lut::Event>();
+    m_backendThread.setObjectName(QStringLiteral("native-package-transactions"));
+    m_backend->moveToThread(&m_backendThread);
+    if (m_flatpakBackend) {
+        m_flatpakBackend->moveToThread(&m_backendThread);
+    }
+    if (m_snapBackend) {
+        m_snapBackend->moveToThread(&m_backendThread);
+    }
+    if (m_pacstallBackend) {
+        m_pacstallBackend->moveToThread(&m_backendThread);
+    }
+    m_backendThread.start();
 }
 
 void TransactionManager::setCallerUidForTest(quint32 uid) {
@@ -69,7 +208,7 @@ quint32 TransactionManager::getCallerUid() const {
             return reply.value();
         }
     }
-    return static_cast<quint32>(::getuid());
+    return std::numeric_limits<quint32>::max(); // Unknown callers must never inherit the daemon UID.
 }
 
 void TransactionManager::replyError(QDBusError::ErrorType type, const QString &msg) {
@@ -89,7 +228,7 @@ void TransactionManager::resetIdleTimer() {
 }
 
 void TransactionManager::onIdleTimeout() {
-    if (!m_hasActiveTransaction) {
+    if (!m_hasActiveTransaction && m_pendingPacstallChecks == 0) {
         qInfo() << "lutd: No active transactions after 120s idle. Exiting cleanly...";
         QCoreApplication::quit();
     }
@@ -126,6 +265,13 @@ void TransactionManager::onBackendEvent(const lut::Event &event) {
         m_currentPlan.installedSizeDelta = plan.installedSizeDelta;
         m_currentPlan.warnings = plan.warnings;
         m_currentPlan.planRevision = plan.planRevision.isEmpty() ? m_currentPlan.calculateFingerprint() : plan.planRevision;
+        // Ein leerer Plan hat nichts zu bestätigen. Hielte der Daemon ihn fest,
+        // lehnte er jede weitere Aktion mit "läuft bereits" ab – bis zum Neustart.
+        if (plan.ops.isEmpty()) {
+            m_planReady = false;
+            m_hasActiveTransaction = false;
+            resetIdleTimer();
+        }
     }
     if (std::holds_alternative<TransactionDone>(event)) {
         m_backendBusy = false;
@@ -157,7 +303,7 @@ void TransactionManager::onBackendEvent(const lut::Event &event) {
 
 QString TransactionManager::GetCapabilities() {
     resetIdleTimer();
-    Capabilities cap = m_backend->capabilities();
+    Capabilities cap = m_capabilities;
     QJsonObject obj;
     obj[QStringLiteral("partialUpgrade")] = cap.partialUpgrade;
     obj[QStringLiteral("downgrade")] = cap.downgrade;
@@ -175,6 +321,11 @@ QString TransactionManager::GetCapabilities() {
     obj[QStringLiteral("typedPackageTargets")] = cap.typedPackageTargets;
     obj[QStringLiteral("transactionReattach")] = cap.transactionReattach;
     obj[QStringLiteral("protocolVersion")] = cap.protocolVersion;
+    QJsonArray sourcesArr;
+    for (const auto &src : cap.sources) {
+        sourcesArr.append(src.toJson());
+    }
+    obj[QStringLiteral("sources")] = sourcesArr;
     QJsonArray commands;
     if (qobject_cast<Dnf5Backend *>(m_backend.get()))
         for (const auto &command : Dnf5Backend::transactionCommands()) commands.append(command);
@@ -182,21 +333,31 @@ QString TransactionManager::GetCapabilities() {
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
+bool TransactionManager::authorize(const QString &action, const QString &service) {
+    return m_policyGate.checkAuthorization(action, service);
+}
+
 bool TransactionManager::ownsTransaction() {
     if (calledFromDBus() && message().service() == m_owner) return true;
     quint32 callerUid = getCallerUid();
     if (m_ownerUid.has_value() && callerUid == *m_ownerUid) return true;
-    if (calledFromDBus() && m_policyGate.checkAuthorization(PolicyGate::ActionManageOthers, message().service())) return true;
+    if (calledFromDBus() && authorize(PolicyGate::ActionManageOthers, message().service())) return true;
     replyError(QDBusError::AccessDenied, QStringLiteral("Die Transaktion gehört einem anderen Aufrufer."));
     return false;
 }
 
 bool TransactionManager::beginAuthorized(const QString &action) {
-    if (m_backendBusy || (m_hasActiveTransaction && m_planReady)) {
+    if (getCallerUid() == std::numeric_limits<quint32>::max()) {
+        replyError(QDBusError::AccessDenied, QStringLiteral("Aufrufer konnte nicht ermittelt werden."));
+        return false;
+    }
+    if (m_backendBusy) {
         replyError(QDBusError::Failed, QStringLiteral("Eine Paketoperation läuft bereits.")); return false;
     }
+    // Ein noch unbestätigter Plan läuft nicht: sein Eigentümer darf ihn durch einen
+    // neuen ersetzen (erneutes "Prüfen", Tray-Check). Fremde Aufrufer bleiben gesperrt.
     if (m_hasActiveTransaction && !ownsTransaction()) return false;
-    if (calledFromDBus() && !m_policyGate.checkAuthorization(action, message().service())) {
+    if (calledFromDBus() && !authorize(action, message().service())) {
         replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied")); return false;
     }
     m_owner = calledFromDBus() ? message().service() : QStringLiteral("local");
@@ -207,6 +368,7 @@ bool TransactionManager::beginAuthorized(const QString &action) {
 
 QDBusObjectPath TransactionManager::RefreshMetadata() {
     if (!beginAuthorized(PolicyGate::ActionRefresh)) return QDBusObjectPath(QStringLiteral("/"));
+    m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), &Backend::refreshMetadata, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
@@ -218,10 +380,12 @@ QDBusObjectPath TransactionManager::PlanUpgrade(const QVariantMap &options) {
     opt.allowDowngrade = options.value(QStringLiteral("allowDowngrade"), false).toBool();
     opt.refreshFirst = options.value(QStringLiteral("refreshFirst"), true).toBool();
     opt.packages = options.value(QStringLiteral("packages")).toStringList();
-    if (!opt.packages.isEmpty() && (!m_backend->capabilities().partialUpgrade || !Validation::areValidPackageNames(opt.packages))) {
+    if (!opt.packages.isEmpty() && (!m_capabilities.partialUpgrade || !Validation::areValidPackageNames(opt.packages))) {
         replyError(QDBusError::InvalidArgs, QStringLiteral("Ungültige Paketauswahl.")); return QDBusObjectPath(QStringLiteral("/"));
     }
-    if (!beginAuthorized(PolicyGate::ActionUpgrade)) return QDBusObjectPath(QStringLiteral("/"));
+    if (!beginAuthorized(PolicyGate::ActionRefresh)) return QDBusObjectPath(QStringLiteral("/"));
+    m_commitAction = PolicyGate::ActionUpgrade;
+    m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), [this, opt] { m_backend->planUpgradeAll(opt); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
@@ -231,6 +395,7 @@ QDBusObjectPath TransactionManager::PlanInstall(const QStringList &names) {
         replyError(QDBusError::InvalidArgs, QStringLiteral("Ungültige Paketnamen.")); return QDBusObjectPath(QStringLiteral("/"));
     }
     if (!beginAuthorized(PolicyGate::ActionInstall)) return QDBusObjectPath(QStringLiteral("/"));
+    m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), [this, names] { m_backend->planInstall(names); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
@@ -240,6 +405,7 @@ QDBusObjectPath TransactionManager::PlanRemove(const QStringList &names) {
         replyError(QDBusError::InvalidArgs, QStringLiteral("Ungültige Paketnamen.")); return QDBusObjectPath(QStringLiteral("/"));
     }
     if (!beginAuthorized(PolicyGate::ActionRemove)) return QDBusObjectPath(QStringLiteral("/"));
+    m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), [this, names] { m_backend->planRemove(names); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
@@ -257,6 +423,7 @@ QDBusObjectPath TransactionManager::PlanDnf5(const QString &command, const QStri
     opt.includeSecurityOnly = options.value(QStringLiteral("includeSecurityOnly"), false).toBool();
     opt.excludeKernel = options.value(QStringLiteral("excludeKernel"), false).toBool();
     opt.allowDowngrade = options.value(QStringLiteral("allowDowngrade"), false).toBool();
+    m_activeBackend = backend;
     QMetaObject::invokeMethod(backend, [backend, command, arguments, opt] { backend->planCommand(command, arguments, opt); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
@@ -267,6 +434,7 @@ QDBusObjectPath TransactionManager::CleanCache() {
         replyError(QDBusError::NotSupported, QStringLiteral("Cachebereinigung ist für dieses Backend nicht angebunden.")); return QDBusObjectPath(QStringLiteral("/"));
     }
     if (!beginAuthorized(PolicyGate::ActionRemove)) return QDBusObjectPath(QStringLiteral("/"));
+    m_activeBackend = backend;
     QMetaObject::invokeMethod(backend, &Dnf5Backend::cleanCache, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
@@ -291,8 +459,9 @@ QDBusObjectPath TransactionManager::PlanPackageTransaction(const QString &action
 
     for (const auto &item : targets) {
         PackageRef ref;
-        if (item.canConvert<QVariantMap>()) {
-            QVariantMap map = item.toMap();
+        if (item.canConvert<QVariantMap>() || item.metaType().id() == qMetaTypeId<QDBusArgument>()) {
+            QVariantMap map = item.metaType().id() == qMetaTypeId<QDBusArgument>()
+                ? qdbus_cast<QVariantMap>(item.value<QDBusArgument>()) : item.toMap();
             ref.name = map.value(QStringLiteral("name")).toString();
             ref.arch = map.value(QStringLiteral("arch")).toString();
             ref.repoId = map.value(QStringLiteral("repoId")).toString();
@@ -315,14 +484,124 @@ QDBusObjectPath TransactionManager::PlanPackageTransaction(const QString &action
 
     if (!beginAuthorized(polkitAction)) return QDBusObjectPath(QStringLiteral("/"));
 
+    Backend *selectedBackend = m_backend.get();
+    if (!intent.targets.isEmpty()) {
+        const QString backendType = intent.targets.first().backend;
+        for (const auto &t : intent.targets) {
+            if (!t.backend.isEmpty() && t.backend != backendType) {
+                replyError(QDBusError::InvalidArgs, QStringLiteral("Transaktionen über mehrere Paketquellen gleichzeitig werden nicht unterstützt."));
+                return QDBusObjectPath(QStringLiteral("/"));
+            }
+        }
+        if (backendType == QLatin1String("flatpak")) {
+            if (!m_flatpakBackend) {
+                replyError(QDBusError::NotSupported, QStringLiteral("Flatpak-Backend ist auf diesem System nicht verfügbar."));
+                return QDBusObjectPath(QStringLiteral("/"));
+            }
+            selectedBackend = m_flatpakBackend.get();
+        } else if (backendType == QLatin1String("snap")) {
+            if (!m_snapBackend) {
+                replyError(QDBusError::NotSupported, QStringLiteral("Snap-Backend ist auf diesem System nicht verfügbar."));
+                return QDBusObjectPath(QStringLiteral("/"));
+            }
+            selectedBackend = m_snapBackend.get();
+        } else if (backendType == QLatin1String("pacstall")) {
+            if (!m_pacstallBackend && !PacstallBackend::isPacstallAvailable()) {
+                replyError(QDBusError::NotSupported, QStringLiteral("Pacstall-Backend ist auf diesem System nicht verfügbar."));
+                return QDBusObjectPath(QStringLiteral("/"));
+            }
+            selectedBackend = ensurePacstallBackend();
+        }
+    }
+    m_activeBackend = selectedBackend;
+
     m_currentIntent = intent;
     m_currentPlan = TransactionPlan();
     m_currentPlan.id = m_currentTransactionPath.path();
 
-    QMetaObject::invokeMethod(m_backend.get(), [this, intent]() {
-        m_backend->planPackageTransaction(intent);
+    QMetaObject::invokeMethod(m_activeBackend, [this, intent]() {
+        m_activeBackend->planPackageTransaction(intent);
     }, Qt::QueuedConnection);
 
+    return m_currentTransactionPath;
+}
+
+PacstallBackend *TransactionManager::ensurePacstallBackend() {
+    if (!m_pacstallBackend) {
+        // Erst nachträglich angelegt (pacstall wurde nach dem Start des Daemons
+        // installiert): trotzdem in den Backend-Thread, sonst liefen Download
+        // und Bau im Hauptthread und blockierten den ganzen D-Bus-Dienst.
+        m_pacstallBackend = std::make_unique<PacstallBackend>();
+        connect(m_pacstallBackend.get(), &Backend::eventEmitted, this, &TransactionManager::onBackendEvent);
+        connect(m_pacstallBackend.get(), &Backend::eventEmitted, &m_progressModel, &ProgressModel::processEvent);
+        if (m_backendThread.isRunning()) m_pacstallBackend->moveToThread(&m_backendThread);
+    }
+    return m_pacstallBackend.get();
+}
+
+QString TransactionManager::PacstallCheck() {
+    resetIdleTimer();
+    if (!PacstallBackend::isPacstallAvailable() && !m_pacstallBackend) {
+        return QStringLiteral("[]");
+    }
+    if (calledFromDBus() && !authorize(PolicyGate::ActionRefresh, message().service())) {
+        replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied for PacstallCheck"));
+        return QStringLiteral("[]");
+    }
+    PacstallBackend *backend = ensurePacstallBackend();
+    if (!calledFromDBus()) {
+        QString error;
+        const auto updates = backend->checkUpdates(&error);
+        return error.isEmpty() ? PacstallBackend::updatesToJson(updates) : QString();
+    }
+
+    // pacstall -Lu fragt jedes Paket im Netz ab und dauert. Im Backend-Thread
+    // ausführen und verzögert antworten, statt den Dienst anzuhalten.
+    setDelayedReply(true);
+    const QDBusMessage request = message();
+    QDBusConnection bus = connection();
+    ++m_pendingPacstallChecks;
+    QMetaObject::invokeMethod(backend, [this, backend, request, bus]() mutable {
+        QString error;
+        const auto updates = backend->checkUpdates(&error);
+        bus.send(error.isEmpty() ? request.createReply(PacstallBackend::updatesToJson(updates))
+                                 : request.createErrorReply(QDBusError::Failed, error));
+        QMetaObject::invokeMethod(this, [this] {
+            --m_pendingPacstallChecks;
+            resetIdleTimer();
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+    return QString();
+}
+
+QDBusObjectPath TransactionManager::PlanPacstallUpgrade(const QStringList &names) {
+    resetIdleTimer();
+    if (names.isEmpty() || !Validation::areValidPackageNames(names)) {
+        replyError(QDBusError::InvalidArgs, QStringLiteral("Ungültige Paketnamen."));
+        return QDBusObjectPath(QStringLiteral("/"));
+    }
+    if (!PacstallBackend::isPacstallAvailable() && !m_pacstallBackend) {
+        replyError(QDBusError::NotSupported, QStringLiteral("Pacstall ist auf diesem System nicht verfügbar."));
+        return QDBusObjectPath(QStringLiteral("/"));
+    }
+    if (!beginAuthorized(PolicyGate::ActionRefresh)) return QDBusObjectPath(QStringLiteral("/"));
+    m_commitAction = PolicyGate::ActionPacstall;
+    m_activeBackend = ensurePacstallBackend();
+    m_currentIntent = TransactionIntent();
+    m_currentIntent.type = TransactionIntent::Type::UpgradeAll;
+    for (const auto &n : names) {
+        PackageRef ref;
+        ref.backend = QStringLiteral("pacstall");
+        ref.name = n;
+        m_currentIntent.targets.append(ref);
+    }
+    m_currentPlan = TransactionPlan();
+    m_currentPlan.id = m_currentTransactionPath.path();
+    quint32 callerUid = getCallerUid();
+    auto *backend = m_pacstallBackend.get();
+    QMetaObject::invokeMethod(backend, [backend, names, callerUid] {
+        backend->planPacstallUpgrade(names, callerUid);
+    }, Qt::QueuedConnection);
     return m_currentTransactionPath;
 }
 
@@ -343,24 +622,29 @@ void TransactionManager::CommitPlan(const QDBusObjectPath &transactionPath, cons
     }
     if (!ownsTransaction()) return;
 
-    if (!planRevision.isEmpty() && !m_currentPlan.planRevision.isEmpty() && planRevision != m_currentPlan.planRevision) {
+    if (planRevision.isEmpty() || planRevision != m_currentPlan.planRevision) {
         replyError(QDBusError::Failed, QStringLiteral("Planrevision stimmt nicht überein (Plan geändert). Bitte neu bestätigen."));
         return;
     }
 
-    if (calledFromDBus() && !m_policyGate.checkAuthorization(m_commitAction, message().service())) {
+    if (calledFromDBus() && !authorize(m_commitAction, message().service())) {
         replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied for Commit"));
         return;
     }
 
     m_backendBusy = true; m_planReady = false;
-    QMetaObject::invokeMethod(m_backend.get(), [this, planRevision]() {
-        m_backend->commitPlan(planRevision);
+    Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
+    QMetaObject::invokeMethod(backend, [backend, planRevision]() {
+        backend->commitPlan(planRevision);
     }, Qt::QueuedConnection);
 }
 
 void TransactionManager::DiscardPlan(const QDBusObjectPath &transactionPath) {
     resetIdleTimer();
+    if (m_backendBusy) {
+        replyError(QDBusError::Failed, QStringLiteral("Eine laufende Transaktion kann nicht verworfen werden."));
+        return;
+    }
     if (transactionPath.path() != m_currentTransactionPath.path()) {
         replyError(QDBusError::InvalidArgs, QStringLiteral("Invalid or expired transaction path"));
         return;
@@ -374,7 +658,9 @@ void TransactionManager::DiscardPlan(const QDBusObjectPath &transactionPath) {
     m_currentIntent = TransactionIntent();
     m_ownerUid.reset();
 
-    QMetaObject::invokeMethod(m_backend.get(), &Backend::discardPlan, Qt::QueuedConnection);
+    Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
+    m_activeBackend = nullptr;
+    QMetaObject::invokeMethod(backend, &Backend::discardPlan, Qt::QueuedConnection);
     resetIdleTimer();
 }
 
@@ -422,13 +708,14 @@ void TransactionManager::Commit(const QDBusObjectPath &transactionPath) {
         replyError(QDBusError::Failed, QStringLiteral("Der Plan ist noch nicht bereit oder wurde bereits ausgeführt.")); return;
     }
     if (!ownsTransaction()) return;
-    if (calledFromDBus() && !m_policyGate.checkAuthorization(m_commitAction, message().service())) {
+    if (calledFromDBus() && !authorize(m_commitAction, message().service())) {
         replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied for Commit"));
         return;
     }
 
     m_backendBusy = true; m_planReady = false;
-    QMetaObject::invokeMethod(m_backend.get(), &Backend::commit, Qt::QueuedConnection);
+    Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
+    QMetaObject::invokeMethod(backend, &Backend::commit, Qt::QueuedConnection);
 }
 
 void TransactionManager::Cancel(const QDBusObjectPath &transactionPath) {
@@ -444,7 +731,8 @@ void TransactionManager::Cancel(const QDBusObjectPath &transactionPath) {
         return;
     }
 
-    QMetaObject::invokeMethod(m_backend.get(), &Backend::cancel, Qt::QueuedConnection);
+    Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
+    QMetaObject::invokeMethod(backend, &Backend::cancel, Qt::QueuedConnection);
 }
 
 void TransactionManager::AnswerQuestion(const QDBusObjectPath &transactionPath, const QString &id, const QString &json) {
@@ -456,8 +744,9 @@ void TransactionManager::AnswerQuestion(const QDBusObjectPath &transactionPath, 
 
     if (!ownsTransaction()) return;
     QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
-    QMetaObject::invokeMethod(m_backend.get(), [this, id, doc]() {
-        m_backend->answerQuestion(id, doc.object());
+    Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
+    QMetaObject::invokeMethod(backend, [backend, id, doc]() {
+        backend->answerQuestion(id, doc.object());
     }, Qt::QueuedConnection);
 }
 
@@ -476,6 +765,88 @@ QStringList TransactionManager::GetEventHistory(const QDBusObjectPath &transacti
         return m_eventHistory;
     }
     return {};
+}
+
+QString TransactionManager::GetRepositories() {
+    resetIdleTimer();
+    return RepoManager::instance().getRepositoriesJson();
+}
+
+QString TransactionManager::GetRepositoryPresets() {
+    resetIdleTimer();
+    return RepoManager::instance().getPresetsJson();
+}
+
+bool TransactionManager::AddRepository(const QString &repoJson) {
+    resetIdleTimer();
+    if (calledFromDBus() && !authorize(PolicyGate::ActionManageRepositories, message().service())) {
+        replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied"));
+        return false;
+    }
+    QString error;
+    bool ok = RepoManager::instance().addRepositoryFromJson(repoJson, &error);
+    if (!ok) {
+        replyError(QDBusError::Failed, error);
+        return false;
+    }
+    return true;
+}
+
+bool TransactionManager::AddRepositoryPreset(const QString &presetId) {
+    resetIdleTimer();
+    if (calledFromDBus() && !authorize(PolicyGate::ActionManageRepositories, message().service())) {
+        replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied"));
+        return false;
+    }
+    // Einrichten und Entfernen installieren bzw. entfernen Pakete (RPM Fusion,
+    // Terra): nicht parallel zu einer laufenden Paketoperation.
+    if (m_backendBusy || m_hasActiveTransaction) {
+        replyError(QDBusError::Failed, QStringLiteral("Eine Paketoperation läuft bereits."));
+        return false;
+    }
+    QString error;
+    bool ok = RepoManager::instance().addPreset(presetId, &error);
+    if (!ok) {
+        replyError(QDBusError::Failed, error);
+        return false;
+    }
+    return true;
+}
+
+bool TransactionManager::RemoveRepository(const QString &repoId) {
+    resetIdleTimer();
+    if (calledFromDBus() && !authorize(PolicyGate::ActionManageRepositories, message().service())) {
+        replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied"));
+        return false;
+    }
+    // Einrichten und Entfernen installieren bzw. entfernen Pakete (RPM Fusion,
+    // Terra): nicht parallel zu einer laufenden Paketoperation.
+    if (m_backendBusy || m_hasActiveTransaction) {
+        replyError(QDBusError::Failed, QStringLiteral("Eine Paketoperation läuft bereits."));
+        return false;
+    }
+    QString error;
+    bool ok = RepoManager::instance().removeRepository(repoId, &error);
+    if (!ok) {
+        replyError(QDBusError::Failed, error);
+        return false;
+    }
+    return true;
+}
+
+bool TransactionManager::ToggleRepository(const QString &repoId, bool enabled) {
+    resetIdleTimer();
+    if (calledFromDBus() && !authorize(PolicyGate::ActionManageRepositories, message().service())) {
+        replyError(QDBusError::AccessDenied, QStringLiteral("Polkit authorization denied"));
+        return false;
+    }
+    QString error;
+    bool ok = RepoManager::instance().toggleRepository(repoId, enabled, &error);
+    if (!ok) {
+        replyError(QDBusError::Failed, error);
+        return false;
+    }
+    return true;
 }
 
 } // namespace lut

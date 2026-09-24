@@ -8,9 +8,9 @@
 #include "liblut/catalog/alpm/AlpmPackageCatalog.h"
 #include "liblut/catalog/dnf5/Dnf5PackageCatalog.h"
 #include "liblut/catalog/apt/AptPackageCatalog.h"
-#include "linux-update-tool/catalog/CatalogService.h"
-#include "linux-update-tool/catalog/ApplicationStore.h"
-#include "linux-update-tool/models/StoreModel.h"
+#include "linux-app-store/catalog/CatalogService.h"
+#include "linux-app-store/catalog/ApplicationStore.h"
+#include "linux-app-store/models/StoreModel.h"
 #include <QElapsedTimer>
 
 using namespace lut;
@@ -109,6 +109,7 @@ void StoreUiTest::testSearchRankingExactMatch()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
     StoreModel model(&store);
 
     // Suche nach "kwrite" -> exakter Treffer kwrite muss Rang 1 haben
@@ -130,6 +131,7 @@ void StoreUiTest::testCategoryFiltering()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
     StoreModel model(&store);
 
     // KWrite gehört zu Utility / TextEditor -> "Werkzeuge"
@@ -158,6 +160,7 @@ void StoreUiTest::testCuratedCollections()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
     store.loadCuratedCollections(QStringLiteral(PROJECT_DIR) + QStringLiteral("/data/store/curated.json"));
 
     QVERIFY(!store.rawCuratedCollections().isEmpty());
@@ -203,6 +206,7 @@ void StoreUiTest::testActionStateAndInstalledFilter()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
     StoreModel model(&store);
 
     // Prüfe ActionState
@@ -211,7 +215,7 @@ void StoreUiTest::testActionStateAndInstalledFilter()
 
     // Filter auf installiert
     model.setInstalledOnly(true);
-    QCOMPARE(model.rowCount(), 1);
+    QTRY_COMPARE(model.rowCount(), 1);
     QCOMPARE(model.data(model.index(0, 0), StoreModel::AppKeyRole).toString(), QStringLiteral("org.kde.kwrite"));
     QCOMPARE(model.data(model.index(0, 0), StoreModel::IsInstalledRole).toBool(), true);
 }
@@ -238,11 +242,12 @@ void StoreUiTest::testPackagesOnlyMode()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
     StoreModel model(&store);
 
     model.setPackagesOnly(true);
     model.setSearchQuery(QStringLiteral("libsomething"));
-    QCOMPARE(model.rowCount(), 1);
+    QTRY_COMPARE(model.rowCount(), 1);
     QCOMPARE(model.data(model.index(0, 0), StoreModel::NameRole).toString(), QStringLiteral("libsomething"));
     QVERIFY(model.data(model.index(0, 0), StoreModel::SummaryRole).toString().contains(QStringLiteral("Repository-Paket")));
 }
@@ -255,6 +260,7 @@ void StoreUiTest::testDebouncedSearch()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
     StoreModel model(&store);
 
     QSignalSpy filterSpy(&model, &StoreModel::filterChanged);
@@ -369,12 +375,16 @@ void StoreUiTest::testSafeMediaUrlSchemes()
 {
     // Erlaubte sichere Schemata (UI-06)
     QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("https://flathub.org/repo/app.png")));
-    QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("http://example.com/screenshot.jpg")));
     QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("/usr/share/icons/hicolor/48x48/apps/app.png")));
     QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("file:///usr/share/pixmaps/app.png")));
     QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("/var/cache/appstream/icons/app.png")));
+    QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("/var/lib/flatpak/appstream/flathub/x86_64/active/icons/128x128/app.png")));
+    QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("/var/lib/app-info/icons/arch/128x128/app.png")));
+    QVERIFY(CatalogService::isSafeMediaUrl(QStringLiteral("/var/lib/snapd/desktop/icons/app.png")));
 
     // Unsichere / manipulierte Schemata abweisen
+    // Abschnitt 4.7 verlangt HTTPS; unverschlüsseltes http zählt nicht als sicher.
+    QVERIFY(!CatalogService::isSafeMediaUrl(QStringLiteral("http://example.com/screenshot.jpg")));
     QVERIFY(!CatalogService::isSafeMediaUrl(QStringLiteral("javascript:alert(1)")));
     QVERIFY(!CatalogService::isSafeMediaUrl(QStringLiteral("data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==")));
     QVERIFY(!CatalogService::isSafeMediaUrl(QStringLiteral("file:///etc/shadow")));

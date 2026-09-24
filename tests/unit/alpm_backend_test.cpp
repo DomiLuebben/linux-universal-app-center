@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDir>
+#include <QFileInfo>
 #include <QDateTime>
 #include <QScopeGuard>
 #include <QCryptographicHash>
@@ -35,6 +36,7 @@ private slots:
     void testRemoveDoesNotSysupgrade(); // ALPM-02
     void testRemoveProtectedPackageBlocked(); // ALPM-05 / TX-04
     void testCommitFingerprintMismatch(); // TX-09 / TX-10
+    void testStoreInstallAndRemoveRoundtrip(); // P3-Abnahme: echter Durchstich
 };
 
 namespace {
@@ -100,6 +102,55 @@ struct MockAlpmEnvironment {
         return writeFile(dir + QStringLiteral("/desc"), content);
     }
 
+    // Legt ein tatsächlich installierbares Paket samt Nutzdaten im Repository ab.
+    // Anders als addSyncPackage() entsteht hier eine echte Paketdatei mit
+    // korrekter Größe und Prüfsumme, damit der Worker sie wirklich entpacken kann.
+    bool addInstallablePackage(const QString &name, const QString &version, const QStringList &relativeFiles) {
+        const QString payload = temp.path() + QStringLiteral("/payload-") + name;
+        QByteArray pkginfo;
+        pkginfo += "pkgname = " + name.toUtf8() + "\n";
+        pkginfo += "pkgbase = " + name.toUtf8() + "\n";
+        pkginfo += "pkgver = " + version.toUtf8() + "\n";
+        pkginfo += "pkgdesc = Installable test package\n";
+        pkginfo += "size = 4096\n";
+        pkginfo += "arch = any\n";
+        if (!QDir().mkpath(payload)) return false;
+        if (!writeFile(payload + QStringLiteral("/.PKGINFO"), pkginfo)) return false;
+
+        QStringList tarEntries = {QStringLiteral(".PKGINFO")};
+        for (const QString &relative : relativeFiles) {
+            const QString full = payload + QLatin1Char('/') + relative;
+            if (!QDir().mkpath(QFileInfo(full).absolutePath())) return false;
+            if (!writeFile(full, name.toUtf8() + " " + version.toUtf8() + "\n")) return false;
+            const QString topLevel = relative.section(QLatin1Char('/'), 0, 0);
+            if (!tarEntries.contains(topLevel)) tarEntries.append(topLevel);
+        }
+
+        const QString fileName = name + QLatin1Char('-') + version + QStringLiteral("-any.pkg.tar.gz");
+        QProcess tar;
+        tar.start(QStringLiteral("tar"), QStringList{QStringLiteral("-czf"), repo + QLatin1Char('/') + fileName,
+                                                     QStringLiteral("-C"), payload} + tarEntries);
+        if (!tar.waitForFinished(10000) || tar.exitCode() != 0) return false;
+
+        QFile package(repo + QLatin1Char('/') + fileName);
+        if (!package.open(QIODevice::ReadOnly)) return false;
+        const QByteArray bytes = package.readAll();
+        const QByteArray digest = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex();
+
+        const QString dir = archive + QLatin1Char('/') + name + QLatin1Char('-') + version;
+        if (!QDir().mkpath(dir)) return false;
+        QByteArray content;
+        content += "%NAME%\n" + name.toUtf8() + "\n\n";
+        content += "%VERSION%\n" + version.toUtf8() + "\n\n";
+        content += "%FILENAME%\n" + fileName.toUtf8() + "\n\n";
+        content += "%ARCH%\nany\n\n";
+        content += "%CSIZE%\n" + QByteArray::number(bytes.size()) + "\n\n";
+        content += "%ISIZE%\n4096\n\n";
+        content += "%SHA256SUM%\n" + digest + "\n\n";
+        content += "%DESC%\nInstallable test package\n\n";
+        return writeFile(dir + QStringLiteral("/desc"), content);
+    }
+
     bool buildSyncDb() {
         QDir archDir(archive);
         QStringList entries = archDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
@@ -108,7 +159,12 @@ struct MockAlpmEnvironment {
         QStringList args = {QStringLiteral("-czf"), db + QStringLiteral("/sync/demo.db"), QStringLiteral("-C"), archive};
         args.append(entries);
         tar.start(QStringLiteral("tar"), args);
-        return tar.waitForFinished(5000) && tar.exitCode() == 0;
+        if (!tar.waitForFinished(5000) || tar.exitCode() != 0) return false;
+
+        // Dieselbe Datenbank auch am Repository-Server ablegen. Der Commit-Pfad
+        // holt sie von dort, während --plan mit der lokalen Kopie auskommt.
+        QFile::remove(repo + QStringLiteral("/demo.db"));
+        return QFile::copy(db + QStringLiteral("/sync/demo.db"), repo + QStringLiteral("/demo.db"));
     }
 };
 
@@ -640,6 +696,87 @@ void AlpmBackendTest::testCommitFingerprintMismatch() {
     output = worker.readAllStandardOutput();
     QVERIFY2(worker.exitCode() == 0, output.constData());
     QVERIFY2(output.contains("\"result\":\"Success\""), output.constData());
+}
+
+// P3-Abnahme: eine Anwendung tatsächlich installieren, Paketbestand und Dateien
+// prüfen, wieder entfernen und erneut prüfen. Der Commit läuft ungefiltert durch
+// den echten Worker; fakeroot liefert nur simulierte Rechte, sämtliche Pfade
+// liegen in einem Wegwerf-Verzeichnis. Das System des Benutzers wird nicht berührt.
+void AlpmBackendTest::testStoreInstallAndRemoveRoundtrip() {
+    MockAlpmEnvironment env;
+    QVERIFY(env.init());
+    QVERIFY(env.addInstallablePackage(QStringLiteral("lut-demo-app"), QStringLiteral("1-1"),
+                                      {QStringLiteral("usr/share/applications/lut-demo-app.desktop"),
+                                       QStringLiteral("usr/share/lut-demo-app/marker")}));
+    QVERIFY(env.buildSyncDb());
+
+    const QString desktopFile = env.temp.path() + QStringLiteral("/usr/share/applications/lut-demo-app.desktop");
+    const QString markerFile = env.temp.path() + QStringLiteral("/usr/share/lut-demo-app/marker");
+    const QStringList rootArgs = {
+        QStringLiteral("--root"), env.temp.path(),
+        QStringLiteral("--dbpath"), env.db,
+        QStringLiteral("--config"), env.config
+    };
+
+    auto planRevisionFor = [&](const QStringList &planArgs) -> QString {
+        QProcess worker;
+        worker.start(workerBinary(), planArgs);
+        if (!worker.waitForFinished(20000)) return {};
+        const auto output = worker.readAllStandardOutput();
+        if (worker.exitCode() != 0) return {};
+        for (const auto &line : output.split('\n')) {
+            const auto event = deserializeEvent(QJsonDocument::fromJson(line).object());
+            if (event && std::holds_alternative<PlanReady>(*event)) {
+                return std::get<PlanReady>(*event).planRevision;
+            }
+        }
+        return {};
+    };
+
+    // 1. Installationsplan erstellen
+    const QString installRevision = planRevisionFor(QStringList{
+        QStringLiteral("--plan"), QStringLiteral("--action"), QStringLiteral("install"),
+        QStringLiteral("--install"), QStringLiteral("lut-demo-app")} + rootArgs);
+    QVERIFY(!installRevision.isEmpty());
+    QVERIFY(!QFile::exists(markerFile)); // Planen installiert nichts
+
+    // 2. Plan tatsächlich ausführen, an die Planrevision gebunden
+    QProcess worker;
+    worker.start(QStringLiteral("fakeroot"), QStringList{workerBinary(),
+        QStringLiteral("--commit"), QStringLiteral("--action"), QStringLiteral("install"),
+        QStringLiteral("--install"), QStringLiteral("lut-demo-app"),
+        QStringLiteral("--expected-fingerprint"), installRevision} + rootArgs);
+    QVERIFY(worker.waitForFinished(30000));
+    auto output = worker.readAllStandardOutput();
+    QVERIFY2(worker.exitCode() == 0, output.constData());
+    QVERIFY2(output.contains("\"result\":\"Success\""), output.constData());
+
+    // 3. Dateien und Paketbestand prüfen
+    QVERIFY2(QFile::exists(markerFile), output.constData());
+    QVERIFY2(QFile::exists(desktopFile), output.constData());
+    QVERIFY2(QFile::exists(env.db + QStringLiteral("/local/lut-demo-app-1-1/desc")), output.constData());
+
+    // 4. Entfernungsplan erstellen
+    const QString removeRevision = planRevisionFor(QStringList{
+        QStringLiteral("--plan"), QStringLiteral("--action"), QStringLiteral("remove"),
+        QStringLiteral("--remove"), QStringLiteral("lut-demo-app")} + rootArgs);
+    QVERIFY(!removeRevision.isEmpty());
+    QVERIFY(removeRevision != installRevision);
+
+    // 5. Entfernung ausführen
+    worker.start(QStringLiteral("fakeroot"), QStringList{workerBinary(),
+        QStringLiteral("--commit"), QStringLiteral("--action"), QStringLiteral("remove"),
+        QStringLiteral("--remove"), QStringLiteral("lut-demo-app"),
+        QStringLiteral("--expected-fingerprint"), removeRevision} + rootArgs);
+    QVERIFY(worker.waitForFinished(30000));
+    output = worker.readAllStandardOutput();
+    QVERIFY2(worker.exitCode() == 0, output.constData());
+    QVERIFY2(output.contains("\"result\":\"Success\""), output.constData());
+
+    // 6. Erneut prüfen: Dateien und Datenbankeintrag sind weg
+    QVERIFY2(!QFile::exists(markerFile), output.constData());
+    QVERIFY2(!QFile::exists(desktopFile), output.constData());
+    QVERIFY2(!QFile::exists(env.db + QStringLiteral("/local/lut-demo-app-1-1/desc")), output.constData());
 }
 
 QTEST_MAIN(AlpmBackendTest)

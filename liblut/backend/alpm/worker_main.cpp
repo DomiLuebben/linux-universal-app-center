@@ -336,7 +336,7 @@ void runTestMode() {
     emitEvent(lut::PhaseChanged{lut::Phase::Finished, QStringLiteral("Fertig"), false});
 }
 
-bool isProtectedPackage(const QString &name, const QStringList &holdPkgs) {
+bool isProtectedPackage(const QString &name, const QStringList &holdPkgs, alpm_pkg_t *pkg = nullptr) {
     if (holdPkgs.contains(name)) {
         return true;
     }
@@ -353,6 +353,11 @@ bool isProtectedPackage(const QString &name, const QStringList &holdPkgs) {
         QStringLiteral("util-linux"),
         QStringLiteral("linux"),
         QStringLiteral("linux-cachyos"),
+        QStringLiteral("linux-cachyos-lts"),
+        QStringLiteral("linux-cachyos-server"),
+        QStringLiteral("linux-cachyos-bore"),
+        QStringLiteral("linux-cachyos-hardened"),
+        QStringLiteral("linux-cachyos-rc"),
         QStringLiteral("linux-lts"),
         QStringLiteral("linux-zen"),
         QStringLiteral("linux-hardened")
@@ -362,10 +367,29 @@ bool isProtectedPackage(const QString &name, const QStringList &holdPkgs) {
     }
     struct utsname uts;
     if (uname(&uts) == 0) {
-        QString runningKernel = QString::fromUtf8(uts.release);
-        if (!runningKernel.isEmpty() && name == runningKernel) {
-            return true;
+        const QString runningRelease = QString::fromUtf8(uts.release);
+        // 1. Prüfe pkgbase des laufenden Kernels
+        QFile pkgbaseFile(QStringLiteral("/usr/lib/modules/%1/pkgbase").arg(runningRelease));
+        if (pkgbaseFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QString pkgbase = QString::fromUtf8(pkgbaseFile.readLine()).trimmed();
+            if (!pkgbase.isEmpty() && (name == pkgbase || name.startsWith(pkgbase + QLatin1Char('-')))) {
+                return true;
+            }
         }
+#ifdef HAVE_ALPM
+        // 2. Prüfe Dateibesitz von Modulpfaden des laufenden Kernels
+        if (pkg) {
+            alpm_filelist_t *files = alpm_pkg_get_files(pkg);
+            if (files) {
+                const QString modPrefix = QStringLiteral("usr/lib/modules/%1/").arg(runningRelease);
+                for (size_t f = 0; f < files->count; ++f) {
+                    if (QString::fromUtf8(files->files[f].name).startsWith(modPrefix)) {
+                        return true;
+                    }
+                }
+            }
+        }
+#endif
     }
     return false;
 }
@@ -657,7 +681,7 @@ int main(int argc, char *argv[]) {
     for (alpm_list_t *i = alpm_trans_get_remove(handle); i; i = alpm_list_next(i)) {
         auto *pkg = static_cast<alpm_pkg_t *>(i->data);
         QString pkgName = QString::fromUtf8(alpm_pkg_get_name(pkg));
-        if (isProtectedPackage(pkgName, holdPkgs)) {
+        if (isProtectedPackage(pkgName, holdPkgs, pkg)) {
             emitEvent(lut::LogLine{lut::LogLevel::Error, QStringLiteral("alpm-worker"),
                 QStringLiteral("Geschütztes Systempaket '%1' darf nicht entfernt werden (Schutz kritischer Systempakete nach Richtlinie TX-04).").arg(pkgName)});
             alpm_trans_release(handle);

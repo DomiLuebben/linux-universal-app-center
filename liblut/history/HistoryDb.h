@@ -15,6 +15,8 @@ struct HistoryRecord {
     qint64 installBytes = 0;
     QString result;
     QString summary;
+    QString source;
+    QString target;
 };
 
 class HistoryDb {
@@ -27,7 +29,9 @@ public:
     bool isOpen() const { return m_db != nullptr; }
 
     qint64 recordTransaction(qint64 durationMs, qint64 downloadBytes, qint64 installBytes,
-                              const QString &result, const QString &summary);
+                              const QString &result, const QString &summary,
+                              const QString &source = QStringLiteral("nativ"),
+                              const QString &target = QString());
 
     QList<HistoryRecord> recentTransactions(int limit = 20) const;
     std::optional<double> averageCommitBytesPerSecond(int limit = 5) const;

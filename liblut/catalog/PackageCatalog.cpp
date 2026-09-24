@@ -21,6 +21,7 @@ QJsonObject AppRecord::toJson() const {
     obj[QStringLiteral("launchableDesktopIds")] = QJsonArray::fromStringList(launchableDesktopIds);
     obj[QStringLiteral("origin")] = origin;
     obj[QStringLiteral("defaultPackageName")] = defaultPackageName;
+    obj[QStringLiteral("packageNames")] = QJsonArray::fromStringList(packageNames);
     return obj;
 }
 
@@ -46,6 +47,11 @@ AppRecord AppRecord::fromJson(const QJsonObject &obj) {
     for (const auto &l : launches) rec.launchableDesktopIds.append(l.toString());
     rec.origin = obj.value(QStringLiteral("origin")).toString();
     rec.defaultPackageName = obj.value(QStringLiteral("defaultPackageName")).toString();
+    const QJsonArray pkgs = obj.value(QStringLiteral("packageNames")).toArray();
+    for (const auto &p : pkgs) rec.packageNames.append(p.toString());
+    if (rec.packageNames.isEmpty() && !rec.defaultPackageName.isEmpty()) {
+        rec.packageNames.append(rec.defaultPackageName);
+    }
     return rec;
 }
 

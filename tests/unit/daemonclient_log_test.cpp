@@ -1,7 +1,7 @@
 #include <QTest>
 #include <QDBusObjectPath>
 #include <QJsonDocument>
-#include "linux-update-tool/DaemonClient.h"
+#include "linux-app-store/DaemonClient.h"
 #include "liblut/protocol/events.h"
 
 using namespace lut;
@@ -38,6 +38,7 @@ private slots:
 
 void DaemonClientLogTest::testFailedCheckIsNotAnEmptyPlan() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     QVERIFY(!client.hasPlan());
     QVERIFY(!client.hasError());
     deliver(client, PlanReady{});
@@ -54,6 +55,7 @@ void DaemonClientLogTest::testFailedCheckIsNotAnEmptyPlan() {
 
 void DaemonClientLogTest::testLogLineIsRecordedOnce() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     QCOMPARE(client.logModel()->rowCount(), 0);
 
     deliver(client, LogLine{LogLevel::Info, QStringLiteral("alpm-worker"),
@@ -67,6 +69,7 @@ void DaemonClientLogTest::testLogLineIsRecordedOnce() {
 
 void DaemonClientLogTest::testPhaseChangeIsRecordedOnce() {
     DaemonClient client;
+    client.setPendingTransactionForTest(true, false);
     deliver(client, PhaseChanged{Phase::Download, QStringLiteral("Pakete holen"), true});
     QCOMPARE(client.logModel()->rowCount(), 1);
 }

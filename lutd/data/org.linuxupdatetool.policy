@@ -66,4 +66,28 @@
       <allow_active>auth_admin</allow_active>
     </defaults>
   </action>
+
+  <action id="org.linuxupdatetool.manage-repositories">
+    <description>Manage software repositories</description>
+    <description xml:lang="de">Paketquellen verwalten</description>
+    <message>Authentication is required to add or remove software repositories</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Paketquellen hinzuzufügen oder zu entfernen</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.linuxupdatetool.pacstall">
+    <description>Upgrade Pacstall packages</description>
+    <description xml:lang="de">Pacstall-Pakete aktualisieren</description>
+    <message>Authentication is required to upgrade Pacstall packages</message>
+    <message xml:lang="de">Legitimation ist erforderlich, um Pacstall-Pakete zu aktualisieren</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
 </policyconfig>

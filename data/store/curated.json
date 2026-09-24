@@ -8,7 +8,7 @@
       "appIds": [
         "org.gimp.GIMP",
         "org.inkscape.Inkscape",
-        "org.blender.org",
+        "org.blender.Blender",
         "org.kde.kdenlive",
         "org.kde.krita",
         "org.audacityteam.Audacity",
@@ -24,7 +24,8 @@
         "org.mozilla.firefox",
         "org.videolan.VLC",
         "org.kde.okular",
-        "org.libreoffice.LibreOffice",
+        "libreoffice-writer",
+        "libreoffice-calc",
         "org.keepassxc.KeePassXC",
         "org.kde.kate",
         "org.gnome.Calculator"
@@ -35,11 +36,10 @@
       "title": "Entwickeln",
       "description": "Entwicklungsumgebungen, Editoren und Programmierwerkzeuge",
       "appIds": [
-        "com.visualstudio.code",
         "org.kde.kdevelop",
         "org.wireshark.Wireshark",
         "org.kde.kate",
-        "git-cola"
+        "org.gnome.meld"
       ]
     },
     {

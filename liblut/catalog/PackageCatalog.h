@@ -29,6 +29,7 @@ struct AppRecord {
     QStringList launchableDesktopIds; // .desktop-Dateinamen
     QString origin;                   // Metadatenquelle, z.B. "archlinux", "fedora", "ubuntu"
     QString defaultPackageName;       // primärer Paketname
+    QStringList packageNames;         // alle zugehörigen Pakete der Anwendung
 
     bool operator==(const AppRecord &other) const = default;
     QJsonObject toJson() const;
@@ -70,6 +71,8 @@ public:
     virtual QList<PackageRef> findPackagesProvidingFile(const QString &filePath) = 0;
     virtual QList<PackageOffer> searchPackages(const QString &query) { Q_UNUSED(query); return {}; }
     virtual int compareVersions(const QString &v1, const QString &v2) const;
+    // Prime command-based backends in batches on the store worker.
+    virtual void prepareSnapshot(const QStringList &names) { Q_UNUSED(names); }
     virtual void reload() {}
 };
 

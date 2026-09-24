@@ -6,7 +6,7 @@
 
 namespace lut {
 struct AptPackageMetadata {
-    QString name, version, arch, summary;
+    QString name, version, arch, summary, sha256;
     qint64 downloadSize = -1;
     qint64 installedSize = -1;
 };
@@ -19,6 +19,7 @@ inline QList<AptPackageMetadata> parseAptMetadata(const QString &text) {
         item.name = fields.value(QStringLiteral("Package"));
         item.version = fields.value(QStringLiteral("Version"));
         item.arch = fields.value(QStringLiteral("Architecture"));
+        item.sha256 = fields.value(QStringLiteral("SHA256")).toLower();
         item.summary = fields.value(QStringLiteral("Description"));
         bool ok = false;
         auto size = fields.value(QStringLiteral("Size")).toLongLong(&ok);

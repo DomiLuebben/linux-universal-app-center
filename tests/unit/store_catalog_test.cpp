@@ -1,4 +1,5 @@
 #include <QTest>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QDir>
@@ -6,8 +7,8 @@
 #include <QDateTime>
 
 #include "liblut/catalog/alpm/AlpmPackageCatalog.h"
-#include "linux-update-tool/catalog/CatalogService.h"
-#include "linux-update-tool/catalog/ApplicationStore.h"
+#include "linux-app-store/catalog/CatalogService.h"
+#include "linux-app-store/catalog/ApplicationStore.h"
 
 using namespace lut;
 
@@ -36,6 +37,8 @@ private slots:
     void testEmptyCatalog();                    // CAT-20
     void testNegativeControlFlatpakFilter();    // Gegenprobe 1 (Sec 12.6)
     void testNegativeControlRepoPriority();     // Gegenprobe 2 (Sec 12.6)
+    void testDesktopSuffixedIdsResolve();       // Kuratierte Sammlungen auf Arch
+    void testMultiSourceCandidateSelection();
 
 private:
     QString m_fixturesDir;
@@ -135,6 +138,7 @@ void StoreCatalogTest::testNativeAvailableApp()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
 
     auto app = store.appRecord(QStringLiteral("org.kde.kwrite"));
     QVERIFY(app.has_value());
@@ -157,7 +161,7 @@ void StoreCatalogTest::testNativeAvailableApp()
     QCOMPARE(action, AppActionState::Available); // Hauptaktion: "Installieren"
 }
 
-// CAT-02 & CAT-08: Gleiche App-ID zusätzlich aus Flatpak-/Flathub-Metadaten / Flatpak-Installation
+// CAT-02 & F2: Gleiche App-ID zusätzlich aus Flatpak-/Flathub-Metadaten / Zusammenführung
 void StoreCatalogTest::testFlatpakExclusion()
 {
     CatalogService catService;
@@ -165,14 +169,26 @@ void StoreCatalogTest::testFlatpakExclusion()
     catService.addExtraDataLocation(m_fixturesDir);
     QVERIFY(catService.load());
 
-    // 1. Ensure pure Flatpak application is not loaded into native store
+    // 1. Reine Flatpak-Anwendung erscheint genau einmal als eigene Karte
     auto flatpakOnly = catService.appByKey(QStringLiteral("org.pureflatpak.OnlyFlatpak"));
-    QVERIFY2(!flatpakOnly.has_value(), "Pure Flatpak component must NOT be loaded");
+    QVERIFY2(flatpakOnly.has_value(), "Pure Flatpak component must be loaded");
+    QCOMPARE(flatpakOnly->origin, QStringLiteral("flatpak"));
+    QCOMPARE(flatpakOnly->name, QStringLiteral("Pure Flatpak App"));
 
-    // 2. Ensure KWrite record does not contain Flatpak origin
+    // 2. KWrite existiert real bei Flathub UND nativ -> genau EINE Karte mit nativer Identität
     auto kwrite = catService.appByKey(QStringLiteral("org.kde.kwrite"));
     QVERIFY(kwrite.has_value());
-    QVERIFY(kwrite->origin != QLatin1String("flatpak"));
+    QCOMPARE(kwrite->origin, QStringLiteral("archlinux"));
+    QVERIFY(kwrite->name.startsWith(QLatin1String("KWrite")));
+    QVERIFY(!kwrite->name.contains(QLatin1String("Flatpak")));
+
+    int kwriteCardCount = 0;
+    for (const auto &a : catService.allApps()) {
+        if (CatalogService::normalizedAppKey(a.appKey) == QLatin1String("org.kde.kwrite")) {
+            ++kwriteCardCount;
+        }
+    }
+    QCOMPARE(kwriteCardCount, 1);
 
     // 3. Native install check: Flatpak presence does not mark native package as installed
     QTemporaryDir env;
@@ -187,9 +203,28 @@ void StoreCatalogTest::testFlatpakExclusion()
 
     AlpmPackageCatalog alpmCatalog(env.path(), dbPath, configPath);
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
 
     InstalledState inst = store.installedState(QStringLiteral("org.kde.kwrite"));
     QVERIFY2(!inst.isFullyInstalled, "Native app must remain uninstalled even if Flatpak fixture exists");
+
+    // 4. KWrite hat 2 Angebote: nativ (Rang 300) vorausgewählt, Flatpak (Rang 200) als Alternative
+    auto offers = store.allOffers(QStringLiteral("org.kde.kwrite"));
+    QCOMPARE(offers.size(), 2);
+    QCOMPARE(offers[0].source(), QStringLiteral("alpm"));
+    QCOMPARE(offers[1].source(), QStringLiteral("flatpak"));
+
+    auto cand = store.candidateOffer(QStringLiteral("org.kde.kwrite"));
+    QVERIFY(cand.has_value());
+    QCOMPARE(cand->source(), QStringLiteral("alpm"));
+
+    // 5. Reine Flatpak-App hat ihr Flatpak-Angebot im Store
+    auto pureOffers = store.allOffers(QStringLiteral("org.pureflatpak.OnlyFlatpak"));
+    QCOMPARE(pureOffers.size(), 1);
+    QCOMPARE(pureOffers[0].source(), QStringLiteral("flatpak"));
+    auto pureCand = store.candidateOffer(QStringLiteral("org.pureflatpak.OnlyFlatpak"));
+    QVERIFY(pureCand.has_value());
+    QCOMPARE(pureCand->source(), QStringLiteral("flatpak"));
 }
 
 // CAT-03: AppStream-Komponente ohne installierbaren Paketkandidaten
@@ -211,6 +246,7 @@ void StoreCatalogTest::testUnavailableComponent()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
 
     auto orphan = store.appRecord(QStringLiteral("org.example.appwithoutpkg"));
     QVERIFY(orphan.has_value());
@@ -247,19 +283,25 @@ void StoreCatalogTest::testRepositoryPriority()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
 
     QList<PackageOffer> offers = store.allOffers(QStringLiteral("org.kde.kwrite"));
-    QCOMPARE(offers.size(), 2);
+    QCOMPARE(offers.size(), 3); // 2 ALPM-Angebote + 1 Flatpak-Angebot
     // Highest priority offer must be cachyos-extra-znver4
+    QCOMPARE(offers[0].packages.first().backend, QStringLiteral("alpm"));
     QCOMPARE(offers[0].packages.first().repoId, QStringLiteral("cachyos-extra-znver4"));
     QCOMPARE(offers[0].packages.first().version, QStringLiteral("24.08.0-2.cachyos"));
     QVERIFY(offers[0].isCandidate);
     QVERIFY(offers[0].priority > offers[1].priority);
 
-    // Second offer remains distinct and unmixed
+    // Second offer remains distinct and unmixed (extra)
+    QCOMPARE(offers[1].packages.first().backend, QStringLiteral("alpm"));
     QCOMPARE(offers[1].packages.first().repoId, QStringLiteral("extra"));
     QCOMPARE(offers[1].packages.first().version, QStringLiteral("24.08.0-1"));
     QVERIFY(!offers[1].isCandidate);
+
+    // Third offer is Flatpak
+    QCOMPARE(offers[2].packages.first().backend, QStringLiteral("flatpak"));
 
     auto cand = store.candidateOffer(QStringLiteral("org.kde.kwrite"));
     QVERIFY(cand.has_value());
@@ -314,8 +356,37 @@ void StoreCatalogTest::testMultiPackageApp()
 
     auto app = catService.appByKey(QStringLiteral("org.example.multipkg"));
     QVERIFY(app.has_value());
-    // In catalog-demo.xml, multipkg lists defaultPackageName as multipkg-core
     QCOMPARE(app->defaultPackageName, QStringLiteral("multipkg-core"));
+
+    // Beide pkgname-Einträge sind ein Installationssatz, keine Alternativen.
+    QCOMPARE(app->packageNames.size(), 2);
+    QVERIFY(app->packageNames.contains(QStringLiteral("multipkg-core")));
+    QVERIFY(app->packageNames.contains(QStringLiteral("multipkg-data")));
+
+    ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
+    store.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!store.isLoading(), 10000);
+
+    const QStringList set = store.packageSet(QStringLiteral("org.example.multipkg"));
+    QCOMPARE(set.size(), 2);
+    QVERIFY(set.contains(QStringLiteral("multipkg-core")));
+    QVERIFY(set.contains(QStringLiteral("multipkg-data")));
+
+    // Nur core ist installiert: die Anwendung ist damit nicht vollständig da.
+    const InstalledState inst = store.installedState(QStringLiteral("org.example.multipkg"));
+    QVERIFY(!inst.isFullyInstalled);
+    QVERIFY(inst.isPartiallyInstalled);
+    QCOMPARE(store.actionState(QStringLiteral("org.example.multipkg")), AppActionState::PartiallyInstalled);
+
+    // Die Installationsanfrage muss den gesamten Satz enthalten, sonst bleibt
+    // die Anwendung nach der Installation unvollständig.
+    QSignalSpy installSpy(&store, &ApplicationStore::installRequested);
+    store.requestInstall(QStringLiteral("org.example.multipkg"));
+    QCOMPARE(installSpy.count(), 1);
+    const QStringList requested = installSpy.first().first().toStringList();
+    QVERIFY2(requested.contains(QStringLiteral("multipkg-core")), qPrintable(requested.join(QLatin1Char(','))));
+    QVERIFY2(requested.contains(QStringLiteral("multipkg-data")), qPrintable(requested.join(QLatin1Char(','))));
 }
 
 // CAT-07: Ein Paket liefert zwei Apps
@@ -333,6 +404,20 @@ void StoreCatalogTest::testSharedPackageMultipleApps()
     QCOMPARE(app1->defaultPackageName, QStringLiteral("shared-tool"));
     QCOMPARE(app2->defaultPackageName, QStringLiteral("shared-tool"));
     QVERIFY(app1->appKey != app2->appKey);
+
+    // Abschnitt 8.7: Entfernt jemand 'shared-tool', muss die Vorschau beide
+    // Anwendungen nennen - nicht nur die angeklickte.
+    ApplicationStore store(&catService, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
+    store.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!store.isLoading(), 10000);
+    const QStringList affected = store.appsProvidedByPackages({QStringLiteral("shared-tool")});
+    QCOMPARE(affected.size(), 2);
+    QVERIFY2(affected.contains(app1->name), qPrintable(affected.join(QLatin1Char(','))));
+    QVERIFY2(affected.contains(app2->name), qPrintable(affected.join(QLatin1Char(','))));
+
+    // Gegenprobe: ein unbeteiligtes Paket darf keine Anwendung melden.
+    QVERIFY(store.appsProvidedByPackages({QStringLiteral("voellig-anderes-paket")}).isEmpty());
 }
 
 // CAT-09: Native App lokal installiert, Repository deaktiviert
@@ -360,6 +445,7 @@ void StoreCatalogTest::testDeactivatedRepositoryInstalled()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
 
     InstalledState inst = store.installedState(QStringLiteral("org.kde.kwrite"));
     QVERIFY(inst.isFullyInstalled);
@@ -368,8 +454,19 @@ void StoreCatalogTest::testDeactivatedRepositoryInstalled()
     auto cand = store.candidateOffer(QStringLiteral("org.kde.kwrite"));
     QVERIFY(!cand.has_value()); // Source no longer available
 
+    // Abschnitt 3.7 / Zustandsmatrix: "Installiert, in den aktuellen Quellen nicht
+    // verfügbar" ist ein eigener Zustand. Starten bleibt möglich, eine
+    // Neuinstallation darf nicht versprochen werden.
     AppActionState action = store.actionState(QStringLiteral("org.kde.kwrite"));
-    QCOMPARE(action, AppActionState::Installed); // "Öffnen" remains available!
+    QCOMPARE(action, AppActionState::MissingSource);
+
+    // Gegenprobe: mit vorhandener Quelle bleibt es der normale Zustand.
+    createMockSyncDb(syncDb + QStringLiteral("/extra.db"), QStringLiteral("kwrite"), QStringLiteral("24.08.0-1"));
+    writeTextFile(configPath, "[options]\nArchitecture = x86_64\n[extra]\n");
+    AlpmPackageCatalog withRepo(env.path(), dbPath, configPath);
+    ApplicationStore storeWithRepo(&catService, &withRepo);
+    QTRY_VERIFY_WITH_TIMEOUT(storeWithRepo.isLoaded(), 10000);
+    QCOMPARE(storeWithRepo.actionState(QStringLiteral("org.kde.kwrite")), AppActionState::Installed);
 }
 
 // CAT-10: Benutzer-Desktop-Datei ohne Paketbesitz
@@ -497,9 +594,10 @@ void StoreCatalogTest::testPackageOnlyMode()
     QVERIFY(catService.load());
 
     ApplicationStore store(&catService, &alpmCatalog);
+    QTRY_VERIFY_WITH_TIMEOUT(store.isLoaded(), 10000);
 
     QList<PackageOffer> pkgOnlyOffers = store.searchPackagesOnly(QStringLiteral("ripgrep"));
-    QCOMPARE(pkgOnlyOffers.size(), 1);
+    QTRY_COMPARE((pkgOnlyOffers = store.searchPackagesOnly(QStringLiteral("ripgrep"))).size(), 1);
     QCOMPARE(pkgOnlyOffers.first().packages.first().name, QStringLiteral("ripgrep"));
 
     // KWrite has an AppStream component, so it must be excluded from package-only mode
@@ -577,6 +675,117 @@ void StoreCatalogTest::testNegativeControlRepoPriority()
     PackageOffer low;
     low.priority = 50;
     QVERIFY(high.priority > low.priority);
+}
+
+// Der Arch-Katalog führt Komponenten als "org.kde.kate.desktop", kuratierte
+// Sammlungen nennen "org.kde.kate". Ohne Angleich bleibt jede Sammlung leer -
+// und zwar lautlos, weil nicht auflösbare Einträge ausgeblendet werden.
+void StoreCatalogTest::testDesktopSuffixedIdsResolve()
+{
+    QCOMPARE(CatalogService::normalizedAppKey(QStringLiteral("org.kde.kate.desktop")),
+             QStringLiteral("org.kde.kate"));
+    QCOMPARE(CatalogService::normalizedAppKey(QStringLiteral("org.kde.kate")),
+             QStringLiteral("org.kde.kate"));
+    // Ein ".desktop" mitten im Namen darf nicht abgeschnitten werden.
+    QCOMPARE(CatalogService::normalizedAppKey(QStringLiteral("org.desktop.Example")),
+             QStringLiteral("org.desktop.Example"));
+
+    CatalogService catService;
+    catService.setLoadStdDataLocations(false);
+    catService.addExtraDataLocation(m_fixturesDir);
+    QVERIFY(catService.load());
+
+    // Exakte Kennung trifft weiterhin.
+    auto exact = catService.appByKey(QStringLiteral("org.example.suffixed.desktop"));
+    QVERIFY(exact.has_value());
+
+    // Die Schreibweise ohne Zusatz muss dieselbe Anwendung finden.
+    auto shortForm = catService.appByKey(QStringLiteral("org.example.suffixed"));
+    QVERIFY2(shortForm.has_value(), "Kennung ohne .desktop-Zusatz wurde nicht aufgelöst");
+    QCOMPARE(shortForm->appKey, exact->appKey);
+
+    // Gegenprobe: eine erfundene Kennung darf nicht plötzlich etwas treffen.
+    QVERIFY(!catService.appByKey(QStringLiteral("org.example.gibtesnicht")).has_value());
+    QVERIFY(!catService.appByKey(QStringLiteral("org.example.gibtesnicht.desktop")).has_value());
+}
+
+void StoreCatalogTest::testMultiSourceCandidateSelection()
+{
+    CatalogService catService;
+    catService.setLoadStdDataLocations(false);
+    catService.addExtraDataLocation(m_fixturesDir);
+    QVERIFY(catService.load());
+
+    ApplicationStore store(&catService, nullptr);
+
+    const QString appKey = QStringLiteral("org.kde.kwrite");
+
+    PackageOffer nativOffer;
+    nativOffer.packages = {PackageRef{"alpm", "extra", "kwrite", "x86_64", "24.08.0-1"}};
+    nativOffer.priority = 10;
+    nativOffer.isCandidate = true;
+    nativOffer.available = true;
+
+    PackageOffer flatpakOffer;
+    flatpakOffer.packages = {PackageRef{"flatpak", "flathub", "org.kde.kwrite", "x86_64", "24.08.0"}};
+    flatpakOffer.priority = 50;
+    flatpakOffer.isCandidate = true;
+    flatpakOffer.available = true;
+
+    PackageOffer snapOffer;
+    snapOffer.packages = {PackageRef{"snap", "stable", "kwrite", "amd64", "24.08.0"}};
+    snapOffer.priority = 100;
+    snapOffer.isCandidate = true;
+    snapOffer.available = true;
+
+    // 1. Alle drei Quellen verfügbar -> Nativ ist vorausgewählt (Rang 300)
+    store.setOffersForApp(appKey, {snapOffer, flatpakOffer, nativOffer});
+    auto cand1 = store.candidateOffer(appKey);
+    QVERIFY(cand1.has_value());
+    QCOMPARE(cand1->source(), QStringLiteral("alpm"));
+
+    // 2. Nativ fehlt -> Flatpak ist vorausgewählt (Rang 200 vor Snap 100)
+    store.setOffersForApp(appKey, {snapOffer, flatpakOffer});
+    auto cand2 = store.candidateOffer(appKey);
+    QVERIFY(cand2.has_value());
+    QCOMPARE(cand2->source(), QStringLiteral("flatpak"));
+
+    // 3. Nur Snap verfügbar -> Snap ist vorausgewählt (Rang 100)
+    store.setOffersForApp(appKey, {snapOffer});
+    auto cand3 = store.candidateOffer(appKey);
+    QVERIFY(cand3.has_value());
+    QCOMPARE(cand3->source(), QStringLiteral("snap"));
+
+    // 4. Nativ UND Flatpak vorhanden, aber Flatpak ist bereits installiert ->
+    // Abschnitt 3.2: installierte Quelle ist vorausgewählt, unabhängig vom Rang!
+    store.setOffersForApp(appKey, {nativOffer, flatpakOffer});
+    InstalledState installedFlatpak;
+    installedFlatpak.isFullyInstalled = true;
+    installedFlatpak.installedPackages = {PackageRef{"flatpak", "flathub", "org.kde.kwrite", "x86_64", "24.08.0"}};
+    store.setInstalledForApp(appKey, installedFlatpak);
+
+    auto candInstalled = store.candidateOffer(appKey);
+    QVERIFY(candInstalled.has_value());
+    QCOMPARE(candInstalled->source(), QStringLiteral("flatpak"));
+
+    CatalogService realCat;
+    realCat.setLoadStdDataLocations(true);
+    if (realCat.load()) {
+        QStringList testKeys = {
+            "org.gimp.GIMP", "org.inkscape.Inkscape", "org.blender.Blender", "org.kde.kdenlive",
+            "org.kde.krita", "org.audacityteam.Audacity", "org.shotcut.Shotcut", "org.darktable.Darktable",
+            "org.mozilla.firefox", "org.videolan.VLC", "org.keepassxc.KeePassXC", "org.gnome.Calculator",
+            "org.wireshark.Wireshark", "org.gnome.meld"
+        };
+        for (const auto &k : testKeys) {
+            auto a = realCat.appByKey(k);
+            if (a) {
+                qDebug() << "APP:" << k << "name:" << a->name << "iconSource:" << a->iconSource;
+            } else {
+                qDebug() << "APP NOT FOUND:" << k;
+            }
+        }
+    }
 }
 
 QTEST_MAIN(StoreCatalogTest)

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(linux-update-tool VERSION 1.1.0 LANGUAGES C CXX)
+project(linux-universal-app-center VERSION 1.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +41,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 add_subdirectory(liblut)
 add_subdirectory(lutd)
-add_subdirectory(linux-update-tool)
+add_subdirectory(linux-app-store)
 add_subdirectory(tests)
 add_subdirectory(tools)

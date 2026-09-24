@@ -37,7 +37,9 @@ bool HistoryDb::open() {
         "  download_bytes INTEGER NOT NULL,"
         "  install_bytes INTEGER NOT NULL,"
         "  result TEXT NOT NULL,"
-        "  summary TEXT"
+        "  summary TEXT,"
+        "  source TEXT DEFAULT 'nativ',"
+        "  target TEXT"
         ");";
 
     char *errMsg = nullptr;
@@ -48,6 +50,10 @@ bool HistoryDb::open() {
         close();
         return false;
     }
+
+    // Schema-Migration für vorhandene Datenbanken
+    sqlite3_exec(m_db, "ALTER TABLE history ADD COLUMN source TEXT DEFAULT 'nativ';", nullptr, nullptr, nullptr);
+    sqlite3_exec(m_db, "ALTER TABLE history ADD COLUMN target TEXT;", nullptr, nullptr, nullptr);
 
     return true;
 }
@@ -60,24 +66,67 @@ void HistoryDb::close() {
 }
 
 qint64 HistoryDb::recordTransaction(qint64 durationMs, qint64 downloadBytes, qint64 installBytes,
-                                     const QString &result, const QString &summary) {
+                                     const QString &result, const QString &summary,
+                                     const QString &source, const QString &target) {
     if (!open()) return -1;
 
-    const char *sql = "INSERT INTO history (timestamp, duration_ms, download_bytes, install_bytes, result, summary) "
-                      "VALUES (?, ?, ?, ?, ?, ?);";
+    qint64 now = QDateTime::currentSecsSinceEpoch();
+
+    // Deduplizierung: Keine doppelten Verlaufseinträge (Abschnitt 9)
+    if (!summary.isEmpty() || !target.isEmpty()) {
+        const char *dedupSql = "SELECT id FROM history WHERE result = ? AND summary = ? AND source = ? AND target = ? AND abs(timestamp - ?) <= 5 LIMIT 1;";
+        sqlite3_stmt *dedupStmt = nullptr;
+        if (sqlite3_prepare_v2(m_db, dedupSql, -1, &dedupStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(dedupStmt, 1, result.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(dedupStmt, 2, summary.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(dedupStmt, 3, source.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(dedupStmt, 4, target.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(dedupStmt, 5, now);
+            if (sqlite3_step(dedupStmt) == SQLITE_ROW) {
+                qint64 existingId = sqlite3_column_int64(dedupStmt, 0);
+                sqlite3_finalize(dedupStmt);
+                return existingId;
+            }
+            sqlite3_finalize(dedupStmt);
+        }
+    } else {
+        const char *dedupSql = "SELECT id FROM history WHERE result = ? AND summary = ? AND source = ? AND target = ? "
+                               "AND duration_ms = ? AND download_bytes = ? AND install_bytes = ? AND abs(timestamp - ?) <= 5 LIMIT 1;";
+        sqlite3_stmt *dedupStmt = nullptr;
+        if (sqlite3_prepare_v2(m_db, dedupSql, -1, &dedupStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(dedupStmt, 1, result.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(dedupStmt, 2, summary.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(dedupStmt, 3, source.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(dedupStmt, 4, target.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(dedupStmt, 5, durationMs);
+            sqlite3_bind_int64(dedupStmt, 6, downloadBytes);
+            sqlite3_bind_int64(dedupStmt, 7, installBytes);
+            sqlite3_bind_int64(dedupStmt, 8, now);
+            if (sqlite3_step(dedupStmt) == SQLITE_ROW) {
+                qint64 existingId = sqlite3_column_int64(dedupStmt, 0);
+                sqlite3_finalize(dedupStmt);
+                return existingId;
+            }
+            sqlite3_finalize(dedupStmt);
+        }
+    }
+
+    const char *sql = "INSERT INTO history (timestamp, duration_ms, download_bytes, install_bytes, result, summary, source, target) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
 
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         return -1;
     }
 
-    qint64 now = QDateTime::currentSecsSinceEpoch();
     sqlite3_bind_int64(stmt, 1, now);
     sqlite3_bind_int64(stmt, 2, durationMs);
     sqlite3_bind_int64(stmt, 3, downloadBytes);
     sqlite3_bind_int64(stmt, 4, installBytes);
     sqlite3_bind_text(stmt, 5, result.toUtf8().constData(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 6, summary.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 7, source.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 8, target.toUtf8().constData(), -1, SQLITE_TRANSIENT);
 
     qint64 insertId = -1;
     if (sqlite3_step(stmt) == SQLITE_DONE) {
@@ -91,7 +140,7 @@ QList<HistoryRecord> HistoryDb::recentTransactions(int limit) const {
     QList<HistoryRecord> list;
     if (!const_cast<HistoryDb*>(this)->open()) return list;
 
-    const char *sql = "SELECT id, timestamp, duration_ms, download_bytes, install_bytes, result, summary "
+    const char *sql = "SELECT id, timestamp, duration_ms, download_bytes, install_bytes, result, summary, source, target "
                       "FROM history ORDER BY id DESC LIMIT ?;";
 
     sqlite3_stmt *stmt = nullptr;
@@ -111,6 +160,14 @@ QList<HistoryRecord> HistoryDb::recentTransactions(int limit) const {
         const char *sumTxt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
         if (sumTxt) {
             r.summary = QString::fromUtf8(sumTxt);
+        }
+        const char *srcTxt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+        if (srcTxt) {
+            r.source = QString::fromUtf8(srcTxt);
+        }
+        const char *tgtTxt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        if (tgtTxt) {
+            r.target = QString::fromUtf8(tgtTxt);
         }
         list.append(r);
     }

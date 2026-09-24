@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    AptBackend backend;
+    AptBackend backend(nullptr, QCoreApplication::applicationDirPath() + QStringLiteral("/../liblut/lut-apt-guard"));
     AptPackageCatalog storeCatalog;
 
     QList<Event> events;
@@ -160,19 +160,76 @@ int main(int argc, char **argv) {
         qFatal("Removal of essential package 'apt' was not blocked!");
     }
 
-    // 7. Revisionsintegrität / Commit-Race-Schutz prüfen (APT-05, TX-09)
+    // 7. Revisionsintegrität / Commit-Race-Schutz prüfen (APT-05, TX-09).
+    //    Dafür braucht es einen frisch aufgelösten, gültigen Plan - sonst greift
+    //    schon der vorgelagerte Wächter "Kein gültiger APT-Plan vorhanden" und
+    //    die Fingerprintprüfung würde nie ausgeführt.
+    TransactionIntent revisionIntent;
+    revisionIntent.type = TransactionIntent::Type::Install;
+    revisionIntent.targets = candidate->packages;
+
+    begin();
+    backend.planPackageTransaction(revisionIntent);
+    wait();
+
+    QString freshRevision;
+    for (const auto &ev : events) {
+        if (const auto *plan = std::get_if<PlanReady>(&ev)) {
+            freshRevision = plan->planRevision;
+        }
+    }
+    if (freshRevision.isEmpty()) {
+        qFatal("PlanReady missing for revision integrity check");
+    }
+
+    // 7a. Abweichende Revision muss genau an der Fingerprintprüfung scheitern.
     begin();
     backend.commitPlan(QStringLiteral("sha256:divergentfingerprint0000000000000000"));
-    bool mismatchRejected = false;
+    QString mismatchSummary;
     for (const auto &ev : events) {
         if (const auto *done = std::get_if<TransactionDone>(&ev)) {
-            if (done->result == Result::Failed) {
-                mismatchRejected = true;
+            if (done->result == Result::Failed && mismatchSummary.isEmpty()) {
+                mismatchSummary = done->summary;
             }
         }
     }
-    if (!mismatchRejected) {
-        qFatal("Commit with mismatched planRevision was not rejected!");
+    if (!mismatchSummary.contains(QStringLiteral("Plan-Fingerprint"))) {
+        qFatal("Commit with mismatched planRevision was not rejected by the fingerprint guard: %s",
+               qPrintable(mismatchSummary));
+    }
+
+    // 7b. Gegenprobe: die korrekte Revision muss den Wächter passieren.
+    //     Sonst würde ein immer ablehnender Commit als "Schutz" durchgehen.
+    begin();
+    backend.planPackageTransaction(revisionIntent);
+    wait();
+    QString secondRevision;
+    for (const auto &ev : events) {
+        if (const auto *plan = std::get_if<PlanReady>(&ev)) {
+            secondRevision = plan->planRevision;
+        }
+    }
+    if (secondRevision != freshRevision) {
+        qFatal("planRevision is not deterministic for an unchanged system");
+    }
+
+    begin();
+    backend.commitPlan(secondRevision);
+    wait();
+    if (events.isEmpty() || !std::holds_alternative<TransactionDone>(events.last()) ||
+        std::get<TransactionDone>(events.last()).result != Result::Success) {
+        QString errorMsg;
+        for (const auto &ev : events) {
+            if (const auto *done = std::get_if<TransactionDone>(&ev)) {
+                errorMsg = done->summary;
+            }
+        }
+        qFatal("Commit with matching planRevision was rejected: %s", qPrintable(errorMsg));
+    }
+
+    storeCatalog.reload();
+    if (!storeCatalog.installedStateForPackage(QStringLiteral("tree")).isFullyInstalled) {
+        qFatal("Commit with matching planRevision did not install 'tree'");
     }
 
     qInfo() << "APT install/remove, candidate resolution, config-files state, protected package guard and planRevision integrity passed successfully.";

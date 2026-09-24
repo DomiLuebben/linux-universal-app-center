@@ -7,9 +7,33 @@
 namespace lut {
 
 bool PackageRef::isValid() const {
-    if (name.isEmpty() || !Validation::isValidPackageName(name)) {
+    if (name.isEmpty()) {
         return false;
     }
+
+    if (backend == QLatin1String("flatpak")) {
+        if (!Validation::isValidFlatpakAppId(name)) {
+            return false;
+        }
+    } else if (backend == QLatin1String("snap")) {
+        if (!Validation::isValidSnapName(name)) {
+            return false;
+        }
+    } else {
+        if (!Validation::isValidPackageName(name)) {
+            return false;
+        }
+    }
+
+    if (!backend.isEmpty() &&
+        backend != QLatin1String("alpm") &&
+        backend != QLatin1String("dnf5") &&
+        backend != QLatin1String("apt") &&
+        backend != QLatin1String("flatpak") &&
+        backend != QLatin1String("snap")) {
+        return false;
+    }
+
     if (!arch.isEmpty() && arch.length() > 32) {
         return false;
     }
@@ -20,6 +44,35 @@ bool PackageRef::isValid() const {
         return false;
     }
     return true;
+}
+
+void sortPackageOffers(QList<PackageOffer> &offers) {
+    std::stable_sort(offers.begin(), offers.end(), [](const PackageOffer &a, const PackageOffer &b) {
+        // 1. Quellrang absteigend (nativ 300 > flatpak 200 > snap 100)
+        int rankA = a.sourceRank();
+        int rankB = b.sourceRank();
+        if (rankA != rankB) {
+            return rankA > rankB;
+        }
+        // 2. Innerhalb der Quelle: vorhandene priority absteigend
+        if (a.priority != b.priority) {
+            return a.priority > b.priority;
+        }
+        // 3. Stabile Sortierung bei Gleichstand
+        QString repoA = a.packages.isEmpty() ? QString() : a.packages.first().repoId;
+        QString repoB = b.packages.isEmpty() ? QString() : b.packages.first().repoId;
+        if (repoA != repoB) {
+            return repoA < repoB;
+        }
+        QString nameA = a.packages.isEmpty() ? QString() : a.packages.first().name;
+        QString nameB = b.packages.isEmpty() ? QString() : b.packages.first().name;
+        if (nameA != nameB) {
+            return nameA < nameB;
+        }
+        QString verA = a.packages.isEmpty() ? QString() : a.packages.first().version;
+        QString verB = b.packages.isEmpty() ? QString() : b.packages.first().version;
+        return verA < verB;
+    });
 }
 
 QJsonObject PackageRef::toJson() const {
@@ -39,6 +92,26 @@ PackageRef PackageRef::fromJson(const QJsonObject &obj) {
     ref.name = obj.value(QStringLiteral("name")).toString();
     ref.arch = obj.value(QStringLiteral("arch")).toString();
     ref.version = obj.value(QStringLiteral("version")).toString();
+    return ref;
+}
+
+QVariantMap PackageRef::toMap() const {
+    QVariantMap map;
+    map[QStringLiteral("backend")] = backend;
+    map[QStringLiteral("repoId")] = repoId;
+    map[QStringLiteral("name")] = name;
+    map[QStringLiteral("arch")] = arch;
+    map[QStringLiteral("version")] = version;
+    return map;
+}
+
+PackageRef PackageRef::fromMap(const QVariantMap &map) {
+    PackageRef ref;
+    ref.backend = map.value(QStringLiteral("backend")).toString();
+    ref.repoId = map.value(QStringLiteral("repoId")).toString();
+    ref.name = map.value(QStringLiteral("name")).toString();
+    ref.arch = map.value(QStringLiteral("arch")).toString();
+    ref.version = map.value(QStringLiteral("version")).toString();
     return ref;
 }
 
@@ -125,6 +198,7 @@ QString appActionStateToString(AppActionState state) {
         case AppActionState::UpdateAvailable: return QStringLiteral("UpdateAvailable");
         case AppActionState::PartiallyInstalled: return QStringLiteral("PartiallyInstalled");
         case AppActionState::MissingSource: return QStringLiteral("MissingSource");
+        case AppActionState::InstalledOtherSource: return QStringLiteral("InstalledOtherSource");
         case AppActionState::Unavailable: return QStringLiteral("Unavailable");
         case AppActionState::ActionUnsupported: return QStringLiteral("ActionUnsupported");
         case AppActionState::PreparingPlan: return QStringLiteral("PreparingPlan");
@@ -144,6 +218,7 @@ AppActionState appActionStateFromString(const QString &str) {
     if (str == QLatin1String("UpdateAvailable")) return AppActionState::UpdateAvailable;
     if (str == QLatin1String("PartiallyInstalled")) return AppActionState::PartiallyInstalled;
     if (str == QLatin1String("MissingSource")) return AppActionState::MissingSource;
+    if (str == QLatin1String("InstalledOtherSource")) return AppActionState::InstalledOtherSource;
     if (str == QLatin1String("PreparingPlan")) return AppActionState::PreparingPlan;
     if (str == QLatin1String("AwaitingConfirmation")) return AppActionState::AwaitingConfirmation;
     if (str == QLatin1String("Progressing")) return AppActionState::Progressing;

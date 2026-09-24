@@ -87,6 +87,18 @@
     <launchable type="desktop-id">multipkg.desktop</launchable>
   </component>
 
+  <!-- Arch führt Komponenten mit ".desktop"-Zusatz. Sammlungen und Verweise
+       nennen dieselbe Anwendung ohne diesen Zusatz. -->
+  <component type="desktop-application">
+    <id>org.example.suffixed.desktop</id>
+    <pkgname>suffixed-tool</pkgname>
+    <name>Suffixed App</name>
+    <summary>App whose catalog id carries the desktop suffix</summary>
+    <icon type="stock">utilities-terminal</icon>
+    <categories><category>Utility</category></categories>
+    <launchable type="desktop-id">org.example.suffixed.desktop</launchable>
+  </component>
+
   <component type="desktop-application">
     <id>org.example.sharedpkg1</id>
     <pkgname>shared-tool</pkgname>

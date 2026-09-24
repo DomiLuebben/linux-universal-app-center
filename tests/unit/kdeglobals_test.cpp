@@ -3,8 +3,8 @@
 #include <QSettings>
 #include <QFile>
 #include <QColor>
-#include "linux-update-tool/theme/SystemPalette.h"
-#include "linux-update-tool/theme/Contrast.h"
+#include "linux-app-store/theme/SystemPalette.h"
+#include "linux-app-store/theme/Contrast.h"
 
 // Die Oberfläche erschien grau statt im Plasma-Schema, weil QSettings im
 // INI-Format unquotierte Kommawerte ("5,14,21") als QStringList liefert.

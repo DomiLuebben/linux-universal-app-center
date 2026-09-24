@@ -12,18 +12,45 @@
 
 namespace lut {
 
-// PackageRef: Backend, Repository-ID, Paketname, Architektur, native Version; separate Felder
-struct PackageRef {
-    QString backend;    // "alpm", "dnf5", "apt"
-    QString repoId;     // z.B. "extra", "core", "fedora", "main"
-    QString name;       // Paketname
-    QString arch;       // Architektur, z.B. "x86_64", "any", "amd64"
-    QString version;    // native Version
+// Verbindliche Quellenrangfolge gemäß Abschnitt 3.1:
+// Nativ (alpm, dnf5, apt) = 300
+// Flatpak = 200
+// Snap = 100
+inline int sourceRank(const QString &backend) {
+    if (backend == QLatin1String("alpm") || backend == QLatin1String("dnf5") || backend == QLatin1String("apt")) {
+        return 300;
+    }
+    if (backend == QLatin1String("flatpak")) {
+        return 200;
+    }
+    if (backend == QLatin1String("snap")) {
+        return 100;
+    }
+    return 0;
+}
 
+// PackageRef: Backend, Repository-ID / Remote / Channel, Paketname / Application-ID / Snap-Name, Architektur, Version
+// Quellenspezifische Feld-Semantik:
+// | Feld    | nativ (alpm/dnf5/apt) | flatpak                             | snap                |
+// |---------|-----------------------|-------------------------------------|---------------------|
+// | backend | alpm | dnf5 | apt     | flatpak                             | snap                |
+// | repoId  | Repository (z.B. extra)| Remote-Name (flathub, talk-origin)  | Channel (stable...) |
+// | name    | Paketname             | Application-ID (org.kde.kate)       | Snap-Name (z.B. vlc)|
+// | arch    | x86_64, any, amd64    | Flatpak-Arch                        | Snap-Arch           |
+// | version | native Version        | Branch + Commit-Kurzform            | Version + Revision  |
+struct PackageRef {
+    QString backend;    // "alpm", "dnf5", "apt", "flatpak", "snap"
+    QString repoId;     // z.B. "extra", "core", "flathub", "stable"
+    QString name;       // Paketname, Application-ID oder Snap-Name
+    QString arch;       // Architektur, z.B. "x86_64", "any", "amd64"
+    QString version;    // Version
+ 
     bool operator==(const PackageRef &other) const = default;
     bool isValid() const;
     QJsonObject toJson() const;
     static PackageRef fromJson(const QJsonObject &obj);
+    QVariantMap toMap() const;
+    static PackageRef fromMap(const QVariantMap &map);
 };
 
 // PackageOffer: Paketreferenzen eines Angebots, native Priorität, Kandidatenstatus, Größen optional, Verfügbarkeit
@@ -36,10 +63,24 @@ struct PackageOffer {
     bool available = true;
     QString unavailabilityReason;
 
+    QString source() const {
+        return packages.isEmpty() ? QString() : packages.first().backend;
+    }
+
+    int sourceRank() const {
+        return lut::sourceRank(source());
+    }
+
     bool operator==(const PackageOffer &other) const = default;
     QJsonObject toJson() const;
     static PackageOffer fromJson(const QJsonObject &obj);
 };
+
+// Sortiert Angebote verbindlich nach Abschnitt 3.1:
+// 1. Quellenrang absteigend (nativ 300 > flatpak 200 > snap 100)
+// 2. Innerhalb der Quelle: vorhandene priority absteigend
+// 3. Bei Gleichstand: stabile Sortierung (Repo-ID / Remote, Name, Version)
+void sortPackageOffers(QList<PackageOffer> &offers);
 
 // InstalledState: Tatsächlich installierte Paketreferenzen, vollständig/teilweise installiert, Herkunft, startbare Desktop-IDs, Bestandsrevision
 struct InstalledState {
@@ -63,6 +104,7 @@ enum class AppActionState {
     UpdateAvailable,            // Update verfügbar -> "Öffnen" / "Aktualisieren"
     PartiallyInstalled,         // Teilweise installiert -> "Prüfen / Vervollständigen"
     MissingSource,              // Installiert, aber Quelle fehlt -> "Öffnen"
+    InstalledOtherSource,       // Aus anderer Quelle installiert -> "Öffnen" / "Parallel installieren"
     Unavailable,                // Nicht verfügbar -> "Nicht verfügbar"
     ActionUnsupported,          // Backend unterstützt Aktion nicht
     PreparingPlan,              // Plan wird berechnet -> "Wird vorbereitet …"

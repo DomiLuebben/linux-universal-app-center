@@ -7,12 +7,18 @@ add_library(liblut STATIC
     progress/Eta.cpp
     progress/ProgressModel.cpp
     backend/Validation.cpp
+    backend/Capabilities.cpp
     backend/Backend.cpp
     backend/replay/ReplayBackend.cpp
     backend/dnf5/Dnf5Backend.cpp
     backend/alpm/AlpmBackend.cpp
     backend/apt/StatusFdParser.cpp
     backend/apt/AptBackend.cpp
+    backend/apt/PlanGuard.cpp
+    backend/flatpak/FlatpakBackend.cpp
+    backend/snap/SnapAvailability.cpp
+    backend/snap/SnapBackend.cpp
+    backend/pacstall/PacstallBackend.cpp
     detect/DistroDetect.cpp
     history/HistoryDb.cpp
     transaction/TransactionTypes.cpp
@@ -20,6 +26,9 @@ add_library(liblut STATIC
     catalog/alpm/AlpmPackageCatalog.cpp
     catalog/dnf5/Dnf5PackageCatalog.cpp
     catalog/apt/AptPackageCatalog.cpp
+    catalog/flatpak/FlatpakPackageCatalog.cpp
+    catalog/snap/SnapPackageCatalog.cpp
+    repository/RepoManager.cpp
 )
 
 target_include_directories(liblut PUBLIC
@@ -30,8 +39,12 @@ target_include_directories(liblut PUBLIC
 target_link_libraries(liblut PUBLIC
     Qt6::Core
     Qt6::DBus
+    Qt6::Network
     SQLite3::SQLite3
 )
+
+# Einzige Versionsquelle ist project() im Wurzel-CMakeLists.txt.
+target_compile_definitions(liblut PRIVATE LUT_VERSION="${PROJECT_VERSION}")
 
 if(ALPM_FOUND)
     target_compile_definitions(liblut PUBLIC HAVE_ALPM=1)
@@ -51,3 +64,7 @@ if(ALPM_FOUND)
     )
     install(TARGETS lut-alpm-worker DESTINATION /usr/libexec/linux-update-tool)
 endif()
+
+add_executable(lut-apt-guard backend/apt/guard_main.cpp)
+target_link_libraries(lut-apt-guard PRIVATE liblut Qt6::Core)
+install(TARGETS lut-apt-guard DESTINATION /usr/libexec/linux-update-tool)
