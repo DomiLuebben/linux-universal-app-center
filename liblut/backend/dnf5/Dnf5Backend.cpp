@@ -104,12 +104,18 @@ void Dnf5Backend::start(const QStringList &args, bool cancellable, std::function
     m_cancellable = cancellable; m_success = std::move(success); m_output.clear();
     m_process.start(m_program, args);
     m_process.closeWriteChannel();
-    if (cancellable) m_timeout.start(15 * 60 * 1000);
+    // Die Vorbereitung lädt mit --store bereits alle Pakete herunter; große
+    // Updates brauchen auf langsamen Leitungen deutlich länger als 15 Minuten.
+    if (cancellable) m_timeout.start(60 * 60 * 1000);
 }
 QByteArray Dnf5Backend::query(const QStringList &args, bool *ok) {
+    // Abfragen lesen nur RPM-Datenbank und vorhandenen Cache; ohne --cacheonly
+    // lüde DNF5 als Benutzer (Liste "Installiert") abgelaufene Metadaten nach.
+    QStringList fullArgs = args;
+    if (!fullArgs.contains(QStringLiteral("--cacheonly"))) fullArgs.prepend(QStringLiteral("--cacheonly"));
     QProcess process;
     process.setProcessEnvironment(environment());
-    process.start(m_program, args);
+    process.start(m_program, fullArgs);
     process.closeWriteChannel();
     bool success = process.waitForStarted(5000) && process.waitForFinished(120000) &&
                    process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
@@ -145,8 +151,17 @@ QStringList Dnf5Backend::transactionCommands() {
         QStringLiteral("environment install"), QStringLiteral("environment remove"), QStringLiteral("environment upgrade")};
 }
 void Dnf5Backend::planUpgradeAll(const UpgradeOptions &options) { planCommand(QStringLiteral("upgrade"), options.packages, options); }
-void Dnf5Backend::planInstall(const QStringList &names) { planCommand(QStringLiteral("install"), names); }
-void Dnf5Backend::planRemove(const QStringList &names) { planCommand(QStringLiteral("remove"), names); }
+// Installieren/Entfernen nutzt den vorhandenen Cache: DNF5 lädt abgelaufene
+// Metadaten selbst nach. --refresh holte sonst bei jeder Store-Aktion alle
+// Repositories neu (mehrere Sekunden). Die Update-Prüfung aktualisiert weiter.
+void Dnf5Backend::planInstall(const QStringList &names) {
+    UpgradeOptions options; options.refreshFirst = false;
+    planCommand(QStringLiteral("install"), names, options);
+}
+void Dnf5Backend::planRemove(const QStringList &names) {
+    UpgradeOptions options; options.refreshFirst = false;
+    planCommand(QStringLiteral("remove"), names, options);
+}
 void Dnf5Backend::planCommand(const QString &command, const QStringList &arguments, const UpgradeOptions &options) {
     if (m_busy) return;
     m_ready = false; m_plannedOps.clear(); m_plan.reset();

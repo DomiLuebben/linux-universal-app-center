@@ -28,9 +28,6 @@ const QString availableQueryFormat =
 const QString installedQueryFormat =
     QStringLiteral("%{name}\x1f%{epoch}\x1f%{version}\x1f%{release}\x1f%{evr}\x1f%{arch}\x1f%{installsize}\x1f%{from_repo}\x1e");
 
-const QString fileQueryFormat =
-    QStringLiteral("%{name}\x1f%{evr}\x1f%{arch}\x1f%{repoid}\x1e");
-
 const QString allInstalledFormat =
     QStringLiteral("%{name}\x1f%{evr}\x1f%{arch}\x1f%{installsize}\x1f%{from_repo}\x1f%{installtime}\x1f%{summary}\x1e");
 
@@ -49,6 +46,7 @@ void Dnf5PackageCatalog::reload() {
     QMutexLocker locker(&m_mutex);
     m_generation++;
     m_inventory.reset();
+    m_fileOwners.reset();
     m_offersCache.clear();
     m_installedCache.clear();
     m_repoScoreCache.clear();
@@ -73,22 +71,17 @@ void Dnf5PackageCatalog::prepareSnapshot(const QStringList &packageNames) {
         for (const auto &name : batch) m_offersCache.insert(name, parseAvailableOffers(groups.value(name), scores));
     }
     const auto inventory = allInstalledPackages();
-    // RPM expands the parallel NAME/FILENAMES arrays once for the entire database.
-    QProcess rpm;
-    rpm.setProcessEnvironment(dnfEnvironment());
-    rpm.start(QStringLiteral("/usr/bin/rpm"), {QStringLiteral("-qa"), QStringLiteral("--qf"),
-        QStringLiteral("[%{=NAME}\t%{FILENAMES}\n]")});
-    rpm.closeWriteChannel();
+    // Desktop-IDs aus demselben RPM-Dateiindex wie findPackagesProvidingFile();
+    // vorher las jeder Ladevorgang die Dateiliste der RPM-Datenbank zweimal.
     QHash<QString, QStringList> desktops;
-    if (rpm.waitForStarted(5000) && rpm.waitForFinished(30000) && rpm.exitCode() == 0) {
-        for (const auto &line : QString::fromUtf8(rpm.readAllStandardOutput()).split(QLatin1Char('\n'))) {
-            const auto fields = line.split(QLatin1Char('\t'));
-            if (fields.size() != 2) continue;
-            const auto &path = fields[1];
-            if (path.startsWith(QStringLiteral("/usr/share/applications/")) && path.endsWith(QStringLiteral(".desktop")))
-                desktops[fields[0]].append(path.mid(24).replace(QLatin1Char('/'), QLatin1Char('-')));
-        }
-    } else { rpm.kill(); rpm.waitForFinished(); }
+    const QString applications = QStringLiteral("/usr/share/applications/");
+    const auto owners = fileOwners();
+    for (auto it = owners.cbegin(); it != owners.cend(); ++it) {
+        const QString &path = it.key();
+        if (!path.startsWith(applications) || !path.endsWith(QLatin1String(".desktop"))) continue;
+        const QString desktopId = path.mid(applications.size()).replace(QLatin1Char('/'), QLatin1Char('-'));
+        for (const auto &ref : it.value()) desktops[ref.name].append(desktopId);
+    }
     QMutexLocker lock(&m_mutex);
     for (const auto &name : names) m_installedCache.insert(name, {});
     for (const auto &pkg : inventory) {
@@ -140,9 +133,14 @@ QMap<QString, int> Dnf5PackageCatalog::repoScores() const {
 }
 
 QByteArray Dnf5PackageCatalog::runQuery(const QStringList &args) const {
+    // Der Katalog läuft als Benutzer: nur den System-Cache lesen, den lutd
+    // aktuell hält. Sonst lädt DNF5 alle Metadaten in ~/.cache nach und
+    // überschreitet bei abgelaufenem Cache die Wartezeit.
+    QStringList fullArgs = args;
+    if (!fullArgs.contains(QStringLiteral("--cacheonly"))) fullArgs.prepend(QStringLiteral("--cacheonly"));
     QProcess process;
     process.setProcessEnvironment(dnfEnvironment());
-    process.start(m_program, args);
+    process.start(m_program, fullArgs);
     process.closeWriteChannel();
     if (!process.waitForStarted(5000)) {
         return {};
@@ -449,6 +447,7 @@ InstalledState Dnf5PackageCatalog::installedStateForPackage(const QString &packa
     locker.unlock();
 
     QStringList args = {
+        QStringLiteral("--cacheonly"),
         QStringLiteral("repoquery"),
         QStringLiteral("-q"),
         QStringLiteral("--installed"),
@@ -464,6 +463,7 @@ InstalledState Dnf5PackageCatalog::installedStateForPackage(const QString &packa
     if (state.isFullyInstalled) {
         // Startbare Desktop-IDs ermitteln
         QStringList fileArgs = {
+            QStringLiteral("--cacheonly"),
             QStringLiteral("repoquery"),
             QStringLiteral("-q"),
             QStringLiteral("--installed"),
@@ -490,7 +490,10 @@ InstalledState Dnf5PackageCatalog::installedStateForPackage(const QString &packa
 
 QList<InstalledPackage> Dnf5PackageCatalog::allInstalledPackages() {
     { QMutexLocker lock(&m_mutex); if (m_inventory) return *m_inventory; }
+    // Nur die RPM-Datenbank abfragen: ohne --cacheonly lüde DNF5 als Benutzer
+    // abgelaufene Metadaten nach und liefe in die Zeitüberschreitung.
     QStringList args = {
+        QStringLiteral("--cacheonly"),
         QStringLiteral("repoquery"),
         QStringLiteral("-q"),
         QStringLiteral("--installed"),
@@ -498,8 +501,13 @@ QList<InstalledPackage> Dnf5PackageCatalog::allInstalledPackages() {
         allInstalledFormat
     };
     QByteArray data = runQuery(args);
+    if (data.trimmed().isEmpty()) {
+        QMutexLocker lock(&m_mutex);
+        return m_lastGoodInventory;
+    }
 
     QStringList orphanArgs = {
+        QStringLiteral("--cacheonly"),
         QStringLiteral("repoquery"),
         QStringLiteral("-q"),
         QStringLiteral("--unneeded"),
@@ -511,23 +519,80 @@ QList<InstalledPackage> Dnf5PackageCatalog::allInstalledPackages() {
     const auto packages = parseInstalledPackages(data, orphanData);
     QMutexLocker lock(&m_mutex);
     m_inventory = packages;
+    m_lastGoodInventory = packages;
     return packages;
+}
+
+QHash<QString, QList<PackageRef>> Dnf5PackageCatalog::loadFileOwners() {
+    // Eine einzige RPM-Abfrage für alle Desktop- und Metainfo-Dateien. Vorher
+    // lief je Datei ein eigener dnf5-Prozess (~3 s), bei einigen hundert
+    // Anwendungen blieb der Katalog dadurch minutenlang leer.
+    QHash<QString, QList<PackageRef>> owners;
+    QProcess rpm;
+    rpm.setProcessEnvironment(dnfEnvironment());
+    rpm.start(QStringLiteral("/usr/bin/rpm"), {QStringLiteral("-qa"), QStringLiteral("--qf"),
+        QStringLiteral("[%{=NAME}\t%{=EPOCHNUM}:%{=VERSION}-%{=RELEASE}\t%{=ARCH}\t%{FILENAMES}\n]")});
+    rpm.closeWriteChannel();
+    if (!rpm.waitForStarted(5000) || !rpm.waitForFinished(60000) || rpm.exitCode() != 0) {
+        rpm.kill(); rpm.waitForFinished();
+        return owners;
+    }
+    static const QStringList prefixes = {QStringLiteral("/usr/share/applications/"),
+        QStringLiteral("/usr/share/metainfo/"), QStringLiteral("/usr/share/appdata/")};
+    for (const auto &line : QString::fromUtf8(rpm.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+        const auto fields = line.split(QLatin1Char('\t'));
+        if (fields.size() != 4) continue;
+        const QString &path = fields[3];
+        if (!std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &p) { return path.startsWith(p); })) continue;
+        if (!Validation::isValidPackageName(fields[0])) continue;
+        QString evr = fields[1];
+        if (evr.startsWith(QLatin1String("0:"))) evr.remove(0, 2);
+        owners[path].append(PackageRef{QStringLiteral("dnf5"), QStringLiteral("@System"), fields[0], fields[2], evr});
+    }
+    return owners;
+}
+
+QHash<QString, QList<PackageRef>> Dnf5PackageCatalog::fileOwners() {
+    {
+        QMutexLocker lock(&m_mutex);
+        if (m_fileOwners) return *m_fileOwners;
+    }
+    auto owners = loadFileOwners();
+    QMutexLocker lock(&m_mutex);
+    if (!m_fileOwners) m_fileOwners = std::move(owners);
+    return *m_fileOwners;
 }
 
 QList<PackageRef> Dnf5PackageCatalog::findPackagesProvidingFile(const QString &filePath) {
     if (filePath.isEmpty()) return {};
 
-    QStringList args = {
-        QStringLiteral("repoquery"),
-        QStringLiteral("-q"),
-        QStringLiteral("-f"),
-        filePath,
-        QStringLiteral("--queryformat"),
-        fileQueryFormat
-    };
+    {
+        const auto owners = fileOwners();
+        auto it = owners.constFind(filePath);
+        if (it != owners.cend()) return it.value();
+        if (filePath.startsWith(QLatin1String("/usr/share/"))) return {};
+    }
 
-    QByteArray out = runQuery(args);
-    return parseFileProviders(out);
+    // Dateien außerhalb der vorab gelesenen Verzeichnisse: einzeln bei RPM
+    // nachfragen, das ist lokal und schnell.
+    QProcess rpm;
+    rpm.setProcessEnvironment(dnfEnvironment());
+    rpm.start(QStringLiteral("/usr/bin/rpm"), {QStringLiteral("-qf"), QStringLiteral("--qf"),
+        QStringLiteral("%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n"), filePath});
+    rpm.closeWriteChannel();
+    QList<PackageRef> result;
+    if (!rpm.waitForStarted(5000) || !rpm.waitForFinished(10000) || rpm.exitCode() != 0) {
+        rpm.kill(); rpm.waitForFinished();
+        return result;
+    }
+    for (const auto &line : QString::fromUtf8(rpm.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+        const auto fields = line.split(QLatin1Char('\t'));
+        if (fields.size() != 3 || !Validation::isValidPackageName(fields[0])) continue;
+        QString evr = fields[1];
+        if (evr.startsWith(QLatin1String("0:"))) evr.remove(0, 2);
+        result.append(PackageRef{QStringLiteral("dnf5"), QStringLiteral("@System"), fields[0], fields[2], evr});
+    }
+    return result;
 }
 
 QList<PackageOffer> Dnf5PackageCatalog::searchPackages(const QString &query) {

@@ -104,6 +104,7 @@ private:
     bool m_hasActiveTransaction = false;
     bool m_backendBusy = false;
     bool m_planReady = false;
+    bool m_commitStarted = false;
     QString m_owner;
     std::optional<quint32> m_ownerUid;
     std::optional<quint32> m_testCallerUid;

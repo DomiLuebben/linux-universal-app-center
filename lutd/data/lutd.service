@@ -8,11 +8,12 @@ Type=dbus
 BusName=org.linuxupdatetool.Daemon1
 ExecStart=/usr/libexec/lutd
 Restart=on-failure
-ProtectHome=yes
+# Keine Dateisystem- oder Socket-Sandbox: lutd startet DNF5/APT/pacman samt
+# RPM-/dpkg-Scriptlets, die überall schreiben dürfen müssen (/run/dnf,
+# /root, /efi, Netlink für Firewall-/Netzwerk-Scriptlets). Mit
+# ProtectSystem=strict lehnt DNF5 den Commit als "requires superuser
+# privileges" ab, obwohl lutd als root läuft.
 PrivateTmp=yes
-ProtectSystem=strict
-ReadWritePaths=/usr /var /etc /tmp /boot /opt /srv
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 TimeoutStopSec=30
 
 [Install]

@@ -307,8 +307,19 @@ private slots:
             QVERIFY(client.installSupported());
             QVERIFY2(startDaemon(), "Test daemon did not restart");
             // Nach dem Neustart muss ein Plan samt Ereignissen wieder ankommen.
+            // Die Anmeldung des aktivierten lutd trifft erst während der Planung
+            // ein. Sie darf die eigene Planung nicht als laufenden Commit
+            // wiederanbinden: das Fortschrittsfenster verdeckte sonst die
+            // Vorschau, bestätigen war unmöglich (1.8.1, Dominik).
+            QSignalSpy started(&client, &DaemonClient::transactionStarted);
             client.planStoreInstall(QStringLiteral("example"));
+            QVERIFY(QMetaObject::invokeMethod(&client, "onDbusNameOwnerChanged", Q_ARG(QString, QStringLiteral("org.linuxupdatetool.Daemon1")),
+                                              Q_ARG(QString, QString()), Q_ARG(QString, QStringLiteral(":1.999"))));
             QTRY_VERIFY2(client.hasPlan(), qPrintable(QStringLiteral("busy=%1 error=%2 status=%3").arg(client.isBusy()).arg(client.hasError()).arg(client.statusMessage())));
+            QVERIFY(!client.isBusy());
+            QVERIFY(client.isStorePlan());
+            QVERIFY(!client.planModel()->planRevision().isEmpty());
+            QCOMPARE(started.count(), 0);
             client.discardStorePlan();
         }
         // Gegenprobe: nicht aktivierbar -> echter Verlust, wie bisher

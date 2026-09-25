@@ -73,6 +73,10 @@ public:
     QList<PackageOffer> searchPackagesOnly(const QString &query) const;
 
     void refresh();
+    // Nur Installationsstatus und Paketangebote neu ermitteln. Die AppStream-
+    // Metadaten ändern sich durch eine Paketaktion nicht; sie neu einzulesen
+    // kostete nach jeder Installation mehrere Sekunden.
+    void refreshInstalledState();
     void updateTransactionStatus(bool installSupported, bool removeSupported, bool busy, bool hasPlan, bool error);
     void transactionStarted();
     void transactionFinished(Result result);

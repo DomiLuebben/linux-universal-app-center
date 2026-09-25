@@ -19,6 +19,9 @@
 #include <QFile>
 #include <QIcon>
 #include <QStandardPaths>
+#include <QDirIterator>
+#include <QSet>
+#include <QSettings>
 #include <unistd.h>
 
 // Icon::filename() gibt es erst ab AppStreamQt 1.2. Debian 13 hat 1.0.5,
@@ -242,6 +245,61 @@ bool CatalogService::isSafeMediaUrl(const QString &url)
     return false;
 }
 
+namespace {
+
+// QIcon::hasThemeIcon() durchsucht bei jedem Aufruf die Theme-Verzeichnisse
+// (~2,4 ms). Beim Laden des Katalogs waren das über 3000 Aufrufe und rund
+// 8 Sekunden. Stattdessen werden die vorhandenen Icon-Namen einmal je Prozess
+// eingelesen: aktuelles Theme samt geerbter Themes, hicolor und pixmaps.
+QSet<QString> buildThemeIconIndex()
+{
+    static const QStringList suffixes = {QStringLiteral("png"), QStringLiteral("svg"),
+                                         QStringLiteral("svgz"), QStringLiteral("xpm")};
+    const QStringList searchPaths = QIcon::themeSearchPaths();
+    QStringList themes;
+    QStringList queue{QIcon::themeName(), QIcon::fallbackThemeName(), QStringLiteral("hicolor")};
+    while (!queue.isEmpty()) {
+        const QString theme = queue.takeFirst();
+        if (theme.isEmpty() || themes.contains(theme)) continue;
+        themes.append(theme);
+        for (const QString &base : searchPaths) {
+            const QString indexFile = base + QLatin1Char('/') + theme + QStringLiteral("/index.theme");
+            if (!QFile::exists(indexFile)) continue;
+            QSettings index(indexFile, QSettings::IniFormat);
+            const QVariant inherits = index.value(QStringLiteral("Icon Theme/Inherits"));
+            queue.append(inherits.typeId() == QMetaType::QStringList ? inherits.toStringList()
+                                                                     : inherits.toString().split(QLatin1Char(','), Qt::SkipEmptyParts));
+            break;
+        }
+    }
+
+    QSet<QString> names;
+    const auto addFile = [&names](const QFileInfo &info) {
+        if (suffixes.contains(info.suffix(), Qt::CaseInsensitive)) names.insert(info.completeBaseName());
+    };
+    for (const QString &theme : std::as_const(themes)) {
+        for (const QString &base : searchPaths) {
+            const QString dir = base + QLatin1Char('/') + theme;
+            if (!QFileInfo(dir).isDir()) continue;
+            QDirIterator it(dir, QDir::Files | QDir::System, QDirIterator::Subdirectories);
+            while (it.hasNext()) { it.next(); addFile(it.fileInfo()); }
+        }
+    }
+    for (const QString &dir : QIcon::fallbackSearchPaths()) {
+        QDirIterator it(dir, QDir::Files | QDir::System);
+        while (it.hasNext()) { it.next(); addFile(it.fileInfo()); }
+    }
+    return names;
+}
+
+bool themeIconExists(const QString &name)
+{
+    static const QSet<QString> index = buildThemeIconIndex();
+    return index.contains(name);
+}
+
+} // namespace
+
 AppRecord CatalogService::componentToAppRecord(const AppStream::Component &comp, const QString &preferredLocale)
 {
     // AppImage remains strictly excluded
@@ -354,7 +412,7 @@ AppRecord CatalogService::componentToAppRecord(const AppStream::Component &comp,
 
         // 4. Check for theme stock icon
         if (!ic.name().isEmpty()) {
-            if (QIcon::hasThemeIcon(ic.name())) {
+            if (themeIconExists(ic.name())) {
                 if (themeStockIcon.isEmpty()) {
                     themeStockIcon = ic.name();
                 }
@@ -535,7 +593,7 @@ void CatalogService::processLoadedComponents()
                     if (QFile::exists(p)) return 4;
                 }
                 if (src.startsWith(QLatin1String("https://"))) return 3;
-                if (QIcon::hasThemeIcon(src)) return 2;
+                if (themeIconExists(src)) return 2;
                 return 1;
             };
 

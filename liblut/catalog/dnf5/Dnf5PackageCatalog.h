@@ -1,4 +1,5 @@
 #pragma once
+#include <QHash>
 
 #include <QString>
 #include <QStringList>
@@ -43,11 +44,17 @@ public:
 
 private:
     QByteArray runQuery(const QStringList &args) const;
+    static QHash<QString, QList<PackageRef>> loadFileOwners();
+    QHash<QString, QList<PackageRef>> fileOwners();
     QMap<QString, int> repoScores() const;
 
     QString m_program;
     mutable QMutex m_mutex;
     std::optional<QList<InstalledPackage>> m_inventory;
+    // Letzter erfolgreicher Bestand: ein fehlgeschlagener Abruf (z. B. während
+    // einer laufenden RPM-Transaktion) darf nicht "nichts installiert" melden.
+    QList<InstalledPackage> m_lastGoodInventory;
+    std::optional<QHash<QString, QList<PackageRef>>> m_fileOwners;
     mutable quint64 m_generation = 1;
     mutable QMap<QString, QList<PackageOffer>> m_offersCache;
     mutable QMap<QString, InstalledState> m_installedCache;

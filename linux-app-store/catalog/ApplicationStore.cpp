@@ -584,6 +584,13 @@ void ApplicationStore::refresh()
     else buildSnapshot();
 }
 
+void ApplicationStore::refreshInstalledState()
+{
+    if (isLoading()) { m_refreshPending = true; return; }
+    if (m_catalogService && !m_catalogService->isLoaded()) { refresh(); return; }
+    buildSnapshot();
+}
+
 void ApplicationStore::onCatalogServiceLoaded(bool success)
 {
     if (success) buildSnapshot();
@@ -1102,7 +1109,7 @@ void ApplicationStore::transactionFinished(Result result) {
     m_operationFailed = result != Result::Success;
     if (!m_operationPackages.isEmpty()) m_operationState = AppActionState::Reconciling;
     notifyState();
-    refresh();
+    refreshInstalledState();
 }
 
 void ApplicationStore::requestInstall(const QString &appKey, int offerIndex)

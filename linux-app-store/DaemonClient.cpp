@@ -68,6 +68,10 @@ void DaemonClient::connectToDaemon() {
         bus,
         this
     );
+    // Plan-Aufrufe warten auf die Polkit-Abfrage. Mit dem D-Bus-Standard von
+    // 25 s lief eine etwas längere Anmeldung in "Did not receive a reply",
+    // während lutd den Plan trotzdem erstellte.
+    m_daemonIface->setTimeout(5 * 60 * 1000);
 
     bus.connect(
         QStringLiteral("org.freedesktop.DBus"),
@@ -157,6 +161,14 @@ void DaemonClient::onDbusNameOwnerChanged(const QString &name, const QString &ol
         emit connectionChanged();
         emit statusChanged();
     } else if (oldOwner.isEmpty() && !newOwner.isEmpty()) {
+        // ensureDaemon() hat lutd selbst aktiviert und ist bereits verbunden;
+        // die Anmeldung meldet sich erst danach. Ein erneutes Verbinden hängte
+        // sich sonst an die eigene, gerade entstehende Planung und hielt sie
+        // für einen laufenden Commit.
+        if (m_connected && m_daemonIface && m_daemonIface->isValid()
+            && (m_busy || m_hasPlan || m_pendingTransaction || !m_activeTransactionPath.path().isEmpty())) {
+            return;
+        }
         qInfo() << "DaemonClient: D-Bus service org.linuxupdatetool.Daemon1 appeared. Reconnecting...";
         connectToDaemon();
     }
@@ -218,6 +230,10 @@ bool DaemonClient::reattachToTransaction(const QDBusObjectPath &path) {
     QJsonDocument doc = QJsonDocument::fromJson(reply.value().toUtf8());
     if (!doc.isObject()) return false;
 
+    // Bereits an genau diese Transaktion gebunden: Zustand nicht zurücksetzen,
+    // die Ereignisse kommen ohnehin über TransactionEvent.
+    if (path.path() == m_activeTransactionPath.path() && (m_busy || m_hasPlan)) return true;
+
     TransactionSnapshot snap = TransactionSnapshot::fromJson(doc.object());
     m_activeTransactionPath = path;
     m_isUpgradePlan = snap.intent.type == TransactionIntent::Type::UpgradeAll;
@@ -258,7 +274,10 @@ bool DaemonClient::reattachToTransaction(const QDBusObjectPath &path) {
         m_hasPlan = false;
         m_hasError = false;
         m_statusMessage = phaseToString(p);
-        emit transactionStarted();
+        // Nur ein angenommener Commit öffnet das Fortschrittsfenster. Während
+        // der Planung (Metadaten, Auflösung) folgt noch die Vorschau mit
+        // Bestätigung; das Fenster hätte sie verdeckt.
+        if (p != Phase::RefreshMetadata && p != Phase::Resolve) emit transactionStarted();
     }
     if (m_hasPlan) emit planReady();
     emit statusChanged();
@@ -558,6 +577,10 @@ void DaemonClient::planStoreInstall(const QList<PackageRef> &targets) {
             if (m_activeTransactionPath.path().isEmpty()) {
                 m_activeTransactionPath = reply.value();
             }
+        } else if (reply.error().type() != QDBusError::UnknownMethod) {
+            // Abgelehnte Freigabe oder Fehler: nicht mit einer zweiten
+            // Polkit-Abfrage über die Altschnittstelle weitermachen.
+            reportError(reply.error().message());
         } else {
             // Fallback auf PlanInstall falls alter Daemon
             QDBusReply<QDBusObjectPath> legacyReply = m_daemonIface->call(QStringLiteral("PlanInstall"), legacyNames);
@@ -629,6 +652,8 @@ void DaemonClient::planStoreRemove(const QList<PackageRef> &targets) {
             if (m_activeTransactionPath.path().isEmpty()) {
                 m_activeTransactionPath = reply.value();
             }
+        } else if (reply.error().type() != QDBusError::UnknownMethod) {
+            reportError(reply.error().message());
         } else {
             // Fallback auf PlanRemove falls alter Daemon
             QDBusReply<QDBusObjectPath> legacyReply = m_daemonIface->call(QStringLiteral("PlanRemove"), legacyNames);

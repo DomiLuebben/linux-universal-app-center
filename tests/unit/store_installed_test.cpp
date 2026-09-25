@@ -280,8 +280,8 @@ void StoreInstalledTest::testInstalledModelAsyncGeneration()
     quint64 genAfter = model.queryGeneration();
     QVERIFY(genAfter > gen0);
 
-    // Warte kurz bis der Hintergrund-Worker die Ergebnisse liefert
-    QTRY_VERIFY_WITH_TIMEOUT(!model.isSearching(), 3000);
+    // Der Worker fragt die echte RPM-Datenbank ab (3-5 s, unter Last mehr)
+    QTRY_VERIFY_WITH_TIMEOUT(!model.isSearching(), 15000);
 }
 
 void StoreInstalledTest::testExternalWatcherDebounce()

@@ -240,24 +240,22 @@ void TransactionManager::registerNewTransaction() {
     m_transactionCounter++;
     m_currentTransactionPath = QDBusObjectPath(QStringLiteral("/org/linuxupdatetool/Transaction/%1").arg(m_transactionCounter));
     m_hasActiveTransaction = true;
+    m_commitStarted = false;
+    // Plan und Absicht gehören zur einzelnen Transaktion. Blieben sie stehen,
+    // meldete ein Wiederanbinden einen Systemupdate-Plan als Store-Plan.
+    m_currentPlan = TransactionPlan();
+    m_currentIntent = TransactionIntent();
     m_eventHistory.clear();
     m_progressModel.reset();
     resetIdleTimer();
 }
 
-void TransactionManager::onBackendEvent(const lut::Event &event) {
+void TransactionManager::onBackendEvent(const lut::Event &backendEvent) {
     m_sequenceCounter++;
-    QJsonObject json = serializeEvent(event, m_sequenceCounter, m_currentTransactionPath.path());
-    QString jsonStr = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact));
+    lut::Event event = backendEvent;
 
-    // Ring-Puffer füllen
-    m_eventHistory.append(jsonStr);
-    if (m_eventHistory.size() > 5000) {
-        m_eventHistory.removeFirst();
-    }
-
-    if (std::holds_alternative<PlanReady>(event)) {
-        const auto &plan = std::get<PlanReady>(event);
+    if (auto *ready = std::get_if<PlanReady>(&event)) {
+        const auto &plan = *ready;
         m_backendBusy = false;
         m_planReady = true;
         m_currentPlan.ops = plan.ops;
@@ -265,6 +263,9 @@ void TransactionManager::onBackendEvent(const lut::Event &event) {
         m_currentPlan.installedSizeDelta = plan.installedSizeDelta;
         m_currentPlan.warnings = plan.warnings;
         m_currentPlan.planRevision = plan.planRevision.isEmpty() ? m_currentPlan.calculateFingerprint() : plan.planRevision;
+        // Backends ohne eigene Revision (DNF5): der Client muss genau diese
+        // Revision an CommitPlan zurückgeben, also mit dem Ereignis senden.
+        ready->planRevision = m_currentPlan.planRevision;
         // Ein leerer Plan hat nichts zu bestätigen. Hielte der Daemon ihn fest,
         // lehnte er jede weitere Aktion mit "läuft bereits" ab – bis zum Neustart.
         if (plan.ops.isEmpty()) {
@@ -296,6 +297,15 @@ void TransactionManager::onBackendEvent(const lut::Event &event) {
         m_inhibitor.releaseLock();
         m_hasActiveTransaction = false;
         resetIdleTimer();
+    }
+
+    QJsonObject json = serializeEvent(event, m_sequenceCounter, m_currentTransactionPath.path());
+    QString jsonStr = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact));
+
+    // Ring-Puffer füllen
+    m_eventHistory.append(jsonStr);
+    if (m_eventHistory.size() > 5000) {
+        m_eventHistory.removeFirst();
     }
 
     emit TransactionEvent(m_currentTransactionPath, jsonStr);
@@ -385,6 +395,7 @@ QDBusObjectPath TransactionManager::PlanUpgrade(const QVariantMap &options) {
     }
     if (!beginAuthorized(PolicyGate::ActionRefresh)) return QDBusObjectPath(QStringLiteral("/"));
     m_commitAction = PolicyGate::ActionUpgrade;
+    m_currentIntent.type = TransactionIntent::Type::UpgradeAll;
     m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), [this, opt] { m_backend->planUpgradeAll(opt); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
@@ -395,6 +406,7 @@ QDBusObjectPath TransactionManager::PlanInstall(const QStringList &names) {
         replyError(QDBusError::InvalidArgs, QStringLiteral("Ungültige Paketnamen.")); return QDBusObjectPath(QStringLiteral("/"));
     }
     if (!beginAuthorized(PolicyGate::ActionInstall)) return QDBusObjectPath(QStringLiteral("/"));
+    m_currentIntent.type = TransactionIntent::Type::Install;
     m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), [this, names] { m_backend->planInstall(names); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
@@ -405,6 +417,7 @@ QDBusObjectPath TransactionManager::PlanRemove(const QStringList &names) {
         replyError(QDBusError::InvalidArgs, QStringLiteral("Ungültige Paketnamen.")); return QDBusObjectPath(QStringLiteral("/"));
     }
     if (!beginAuthorized(PolicyGate::ActionRemove)) return QDBusObjectPath(QStringLiteral("/"));
+    m_currentIntent.type = TransactionIntent::Type::Remove;
     m_activeBackend = m_backend.get();
     QMetaObject::invokeMethod(m_backend.get(), [this, names] { m_backend->planRemove(names); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
@@ -423,6 +436,7 @@ QDBusObjectPath TransactionManager::PlanDnf5(const QString &command, const QStri
     opt.includeSecurityOnly = options.value(QStringLiteral("includeSecurityOnly"), false).toBool();
     opt.excludeKernel = options.value(QStringLiteral("excludeKernel"), false).toBool();
     opt.allowDowngrade = options.value(QStringLiteral("allowDowngrade"), false).toBool();
+    m_currentIntent.type = TransactionIntent::Type::CustomCommand;
     m_activeBackend = backend;
     QMetaObject::invokeMethod(backend, [backend, command, arguments, opt] { backend->planCommand(command, arguments, opt); }, Qt::QueuedConnection);
     return m_currentTransactionPath;
@@ -632,7 +646,7 @@ void TransactionManager::CommitPlan(const QDBusObjectPath &transactionPath, cons
         return;
     }
 
-    m_backendBusy = true; m_planReady = false;
+    m_backendBusy = true; m_planReady = false; m_commitStarted = true;
     Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
     QMetaObject::invokeMethod(backend, [backend, planRevision]() {
         backend->commitPlan(planRevision);
@@ -674,6 +688,10 @@ QString TransactionManager::AttachTransaction(const QDBusObjectPath &transaction
     snap.transactionPath = m_currentTransactionPath.path();
     snap.intent = m_currentIntent;
     snap.phase = m_progressModel.currentPhase();
+    // Zwischen Bestätigung und erstem Backend-Ereignis steht die Phase noch
+    // auf Idle; ein neu verbundenes Fenster zeigte sonst den Plan statt "läuft".
+    if (m_backendBusy && snap.phase == Phase::Idle)
+        snap.phase = m_commitStarted ? Phase::Commit : Phase::Resolve;
     snap.plan = m_currentPlan;
     snap.canCancel = m_progressModel.isCancellable();
     snap.sequenceNumber = m_sequenceCounter;
@@ -713,7 +731,7 @@ void TransactionManager::Commit(const QDBusObjectPath &transactionPath) {
         return;
     }
 
-    m_backendBusy = true; m_planReady = false;
+    m_backendBusy = true; m_planReady = false; m_commitStarted = true;
     Backend *backend = m_activeBackend ? m_activeBackend : m_backend.get();
     QMetaObject::invokeMethod(backend, &Backend::commit, Qt::QueuedConnection);
 }

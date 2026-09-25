@@ -360,7 +360,7 @@ int main(int argc, char *argv[]) {
     });
 
     QObject::connect(changeWatcher, &lut::ExternalChangeWatcher::databaseChanged, appStore, [appStore, client]() {
-        appStore->refresh();
+        appStore->refreshInstalledState();
         client->installedModel()->refresh();
     });
 
